@@ -47,8 +47,12 @@ public sealed class TranslationDirection : IDisposable
             await _client.SendActivityAsync(start: false, _cts.Token);
     }
 
-    /// <summary>Translated audio (24 kHz mono PCM16) as it is produced — the same bytes that are played to the listener. Used by the conversation recorder.</summary>
-    public event Action<byte[]>? TranslationAudio;
+    /// <summary>The exact audio being played to the listener (post-mix, post-duck) as (buffer, offset, sampleCount) in <see cref="RenderFormat"/>. The recorder taps this so the recording matches what is actually heard.</summary>
+    public event Action<float[], int, int>? RenderedAudio;
+    /// <summary>Format of the samples delivered by <see cref="RenderedAudio"/>.</summary>
+    public WaveFormat RenderFormat => _player.RenderFormat;
+    /// <summary>Original captured audio (16 kHz mono PCM16) sent to Gemini — the untranslated voice. On the incoming side it streams continuously; on the outgoing side only while you hold push-to-talk. Used by the conversation recorder.</summary>
+    public event Action<byte[]>? CapturedAudio;
     /// <summary>Translated text the listener will hear (output transcript).</summary>
     public event Action<string>? TranslatedText;
     /// <summary>Original recognized text (input transcript).</summary>
@@ -91,6 +95,7 @@ public sealed class TranslationDirection : IDisposable
 
         _source.LevelChanged += l => InputLevel?.Invoke(l);
         _source.ChunkAvailable += OnChunk;
+        _player.SamplesRendered += (b, o, n) => RenderedAudio?.Invoke(b, o, n);
     }
 
     private async void OnChunk(byte[] chunk)
@@ -102,6 +107,7 @@ public sealed class TranslationDirection : IDisposable
         // voice. No "mute while translating" guard either: Gemini translates simultaneously
         // (emits while you speak), so muting during playback would clip your sentence — the
         // loop is prevented by keeping capture and playback on different devices.
+        CapturedAudio?.Invoke(chunk);
         if (_passthrough)
             _player.EnqueueOriginal(chunk);
         try { await _client.SendAudioAsync(chunk, _cts.Token); }
@@ -112,7 +118,6 @@ public sealed class TranslationDirection : IDisposable
     private void OnTranslationAudio(byte[] pcm24k)
     {
         _player.EnqueueTranslation(pcm24k);
-        TranslationAudio?.Invoke(pcm24k);
         lock (_recLock)
         {
             try { _recorder?.Write(pcm24k, 0, pcm24k.Length); } catch { }

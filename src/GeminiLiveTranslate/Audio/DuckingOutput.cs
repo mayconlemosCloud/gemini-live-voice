@@ -43,6 +43,17 @@ public sealed class DuckingOutput : IDisposable
 
     public bool TranslationActive => _transBuf.BufferedDuration.TotalMilliseconds > 60;
 
+    /// <summary>
+    /// Fires on the render thread with the EXACT samples being played (post-mix, post-duck) as
+    /// (buffer, offset, sampleCount) in <see cref="RenderFormat"/>. The conversation recorder taps
+    /// this so the recording is identical to what is actually heard, with no re-mixing. Handlers
+    /// must copy what they need — the buffer is reused by the playback pump.
+    /// </summary>
+    public event Action<float[], int, int>? SamplesRendered;
+
+    /// <summary>Format of the samples delivered by <see cref="SamplesRendered"/> (the device mix format).</summary>
+    public WaveFormat RenderFormat => _mix.WaveFormat;
+
     public DuckingOutput(MMDevice device)
     {
         _device = device;
@@ -56,7 +67,9 @@ public sealed class DuckingOutput : IDisposable
         ISampleProvider trans = ToMixFormat(_transBuf.ToSampleProvider(), mix);
         _mix = new DuckMixProvider(orig, trans, _transBuf);
 
-        IWaveProvider final = new SampleToWaveProvider(_mix);
+        // Tap the final mix so the recorder captures exactly what is played (same ducking, no re-mix).
+        var tap = new TapProvider(_mix, (buf, off, n) => SamplesRendered?.Invoke(buf, off, n));
+        IWaveProvider final = new SampleToWaveProvider(tap);
         _output = new WasapiOut(device, AudioClientShareMode.Shared, true, 100);
         _output.Init(final);
         Log.Info(Tag, $"Saída com ducking em '{device.FriendlyName}'. Mix {mix.SampleRate} Hz {mix.Channels} ch.");
@@ -112,6 +125,28 @@ public sealed class DuckingOutput : IDisposable
         try { _output.Stop(); } catch { }
         try { _output.Dispose(); } catch { }
         try { _device.Dispose(); } catch { }
+    }
+}
+
+/// <summary>Pass-through that forwards each block of played samples to a tap (for recording).</summary>
+internal sealed class TapProvider : ISampleProvider
+{
+    private readonly ISampleProvider _src;
+    private readonly Action<float[], int, int> _tap;
+
+    public TapProvider(ISampleProvider src, Action<float[], int, int> tap)
+    {
+        _src = src;
+        _tap = tap;
+    }
+
+    public WaveFormat WaveFormat => _src.WaveFormat;
+
+    public int Read(float[] buffer, int offset, int count)
+    {
+        int n = _src.Read(buffer, offset, count);
+        if (n > 0) _tap(buffer, offset, n);
+        return n;
     }
 }
 

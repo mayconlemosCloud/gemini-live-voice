@@ -86,8 +86,9 @@ public sealed class TranslationEngine
         _incoming.InputLevel += l => IncomingLevel?.Invoke(l);
         _incoming.Status += m => Status?.Invoke(m);
         _incoming.Usage += OnUsage;
-        // Left channel of the recording: the translation you hear (their words in your language).
-        _incoming.TranslationAudio += pcm => _recorder?.WriteIncoming(pcm);
+        // Left channel of the recording: exactly what you hear (ducked original + translation),
+        // tapped straight from the player so it matches the live audio with no re-mixing.
+        _incoming.RenderedAudio += (b, o, n) => _recorder?.WriteIncoming(b, o, n);
 
         // Outgoing: let the other person understand you.
         if (s.EnableOutgoing)
@@ -125,8 +126,10 @@ public sealed class TranslationEngine
             _outgoing.InputLevel += l => OutgoingLevel?.Invoke(l);
             _outgoing.Status += m => Status?.Invoke(m);
             _outgoing.Usage += OnUsage;
-            // Right channel of the recording: your translated voice (your words in their language).
-            _outgoing.TranslationAudio += pcm => _recorder?.WriteOutgoing(pcm);
+            // Right channel of the recording: what the meeting receives — the translation (tapped
+            // from the player) plus your original mic voice (the meeting hears both live).
+            _outgoing.RenderedAudio += (b, o, n) => _recorder?.WriteOutgoing(b, o, n);
+            _outgoing.CapturedAudio += pcm => _recorder?.WriteOutgoingOriginal(pcm);
             // Push-to-talk: start muted so leaked audio/noise is never translated. The UI
             // unmutes the mic only while the talk key/button is held.
             _outgoing.MicMuted = true;
@@ -171,7 +174,7 @@ public sealed class TranslationEngine
 
         string dir = string.IsNullOrEmpty(Log.LogFolder) ? Path.GetTempPath() : Log.LogFolder;
         string path = Path.Combine(dir, $"conversa-{DateTime.Now:yyyyMMdd-HHmmss}.wav");
-        _recorder = new ConversationRecorder(path);
+        _recorder = new ConversationRecorder(path, _incoming!.RenderFormat, _outgoing?.RenderFormat);
         Log.Info("Engine", $"Gravação da conversa iniciada: {path}");
         return path;
     }
