@@ -40,9 +40,34 @@
                     <ComboBox x:Name="OutgoingLangCombo"/>
 
                     <CheckBox x:Name="ContinuousCheck" Content="Streaming contínuo (melhor entonação)" IsChecked="True"/>
-                    <CheckBox x:Name="DuckCheck" Content="Abaixar áudio original quando traduzir (estilo Meet)" IsChecked="True"/>
+                    <CheckBox x:Name="DuckCheck" Content="Abaixar áudio original quando traduzir (estilo Meet)"
+                              IsChecked="True" Checked="OnDuckToggled" Unchecked="OnDuckToggled"/>
+                    <Grid x:Name="DuckLevelPanel" Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Slider x:Name="DuckLevelSlider" Grid.Column="0" Minimum="0" Maximum="0.6"
+                                SmallChange="0.02" LargeChange="0.1" VerticalAlignment="Center"
+                                ValueChanged="OnDuckLevelChanged"/>
+                        <TextBlock x:Name="DuckLevelText" Grid.Column="1" Margin="8,0,0,0" MinWidth="86"
+                                   VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}"
+                                   Text="original a 18%"/>
+                    </Grid>
+                    <TextBlock Text="Volume do áudio original enquanto a tradução fala. Menor = tradução sobressai mais."
+                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"/>
+
+                    <CheckBox x:Name="AutoDefaultCheck" Content="Definir dispositivo padrão do Windows ao iniciar"
+                              Margin="0,10,0,0"/>
+                    <TextBlock Text="Aponta o cabo virtual como padrão do Windows enquanto traduz (e restaura ao parar), para apps como WhatsApp/Teams se ajustarem sozinhos. O Meet no navegador ainda escolhe por aba."
+                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"/>
+
+                    <Button x:Name="GuideButton" Content="❔ Como configurar Teams / Meet / WhatsApp" Click="OnShowGuide"
+                            Margin="0,10,0,0" Padding="8,6" Background="{StaticResource Field}"
+                            Foreground="{StaticResource Text}" BorderBrush="#44444C"/>
+
                     <TextBlock Text="Captura e saída precisam ser dispositivos DIFERENTES, senão a fala entra em loop."
-                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                               Foreground="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"/>
 
                     <TextBlock x:Name="WarningText" Foreground="{StaticResource Warn}" TextWrapping="Wrap"
                                FontSize="12" Margin="0,14,0,0" Visibility="Collapsed"/>
@@ -90,12 +115,17 @@
             <Grid Grid.Row="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <Button x:Name="StartButton" Grid.Column="0" Content="▶  Iniciar" Click="OnStartStop"
                         Padding="22,12" FontSize="15" FontWeight="SemiBold"
                         Background="{StaticResource Accent}" Foreground="{StaticResource AccentText}" BorderThickness="0"/>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="18,0,0,0">
+                <Button x:Name="RecordButton" Grid.Column="1" Content="⏺ Gravar conversa" Click="OnRecordToggle"
+                        IsEnabled="False" Margin="10,0,0,0" Padding="14,12" FontWeight="SemiBold"
+                        Background="{StaticResource Field}" Foreground="{StaticResource Text}" BorderBrush="#44444C"
+                        ToolTip="Grava a conversa traduzida num arquivo .wav estéreo (esquerda: o que você ouve · direita: o que eles ouvem)"/>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="18,0,0,0">
                     <TextBlock x:Name="StatusText" Text="Parado" Foreground="{StaticResource Muted}"/>
                     <TextBlock x:Name="CostText" Margin="0,4,0,0" FontWeight="SemiBold"
                                Text="US$ 0,0000  ·  R$ 0,00"/>
@@ -134,8 +164,14 @@
 
             <!-- Outgoing transcript -->
             <DockPanel Grid.Row="3" Margin="0,14,0,0">
-                <TextBlock x:Name="OutgoingHeader" DockPanel.Dock="Top" Text="Você"
-                           FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                    <Button x:Name="TalkButton" DockPanel.Dock="Right" Content="🎤 Segure para falar (ESPAÇO)"
+                            Padding="12,6" FontWeight="SemiBold" IsEnabled="False"
+                            Background="{StaticResource Field}" Foreground="{StaticResource Text}" BorderBrush="#44444C"
+                            PreviewMouseLeftButtonDown="OnTalkDown" PreviewMouseLeftButtonUp="OnTalkUp"
+                            MouseLeave="OnTalkLeave"/>
+                    <TextBlock x:Name="OutgoingHeader" Text="Você" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </DockPanel>
                 <TextBox x:Name="OutgoingTranscript" Style="{StaticResource TranscriptBox}"/>
             </DockPanel>
 

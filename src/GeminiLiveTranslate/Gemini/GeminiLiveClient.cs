@@ -25,11 +25,18 @@ public sealed class GeminiLiveClient : IDisposable
     private readonly string _model;
     private readonly string _targetLang;
     private readonly bool _echoTargetLanguage;
+    private readonly bool _manualActivity;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
     private Task? _receiveTask;
+
+    // Live API sessions are time-limited and the server sends GoAway/Close periodically.
+    // We must transparently re-open the socket (like Google's LiveKit example does) so a
+    // long meeting keeps translating instead of going silent after a few minutes.
+    private volatile bool _closing;
+    private long _reconnects;
 
     private long _audioChunksSent;
     private long _audioBytesSent;
@@ -52,16 +59,30 @@ public sealed class GeminiLiveClient : IDisposable
 
     public bool IsReady { get; private set; }
 
-    public GeminiLiveClient(string apiKey, string model, string targetLang, bool echoTargetLanguage)
+    public GeminiLiveClient(string apiKey, string model, string targetLang, bool echoTargetLanguage,
+        bool manualActivity = false)
     {
         _apiKey = apiKey;
         _model = model;
         _targetLang = targetLang;
         _echoTargetLanguage = echoTargetLanguage;
+        _manualActivity = manualActivity;
     }
 
     public async Task ConnectAsync(CancellationToken ct)
     {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // First open is awaited so Start surfaces connection/auth errors to the UI.
+        await OpenAndSetupAsync(_cts.Token);
+        _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        StatusChanged?.Invoke("conectado");
+    }
+
+    /// <summary>Opens the WebSocket and sends the setup frame. Used for the first connect and every reconnect.</summary>
+    private async Task OpenAndSetupAsync(CancellationToken ct)
+    {
+        IsReady = false;
+        try { _ws?.Dispose(); } catch { }
         _ws = new ClientWebSocket();
         var uri = new Uri($"{Endpoint}?key={Uri.EscapeDataString(_apiKey)}");
         Log.Info(Tag, $"Conectando WebSocket — modelo='{_model}', alvo='{_targetLang}', echo={_echoTargetLanguage}, key={Log.Mask(_apiKey)}");
@@ -94,20 +115,18 @@ public sealed class GeminiLiveClient : IDisposable
                 },
                 ["inputAudioTranscription"] = new JsonObject(),
                 ["outputAudioTranscription"] = new JsonObject(),
-                // Matches Google's official example: let the server do voice-activity
-                // detection / turn segmentation on the continuous stream.
+                // Incoming (continuous): let the server segment turns by VAD (works great).
+                // Outgoing (push-to-talk): disable server VAD and bracket each utterance with
+                // activityStart/activityEnd ourselves, per the docs — otherwise stopping the
+                // audio without an explicit end leaves the turn open and the model loops/hallucinates.
                 ["realtimeInputConfig"] = new JsonObject
                 {
-                    ["automaticActivityDetection"] = new JsonObject { ["disabled"] = false }
+                    ["automaticActivityDetection"] = new JsonObject { ["disabled"] = _manualActivity }
                 }
             }
         };
         Log.Info(Tag, "Enviando setup: " + setup.ToJsonString());
         await SendJsonAsync(setup, ct);
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _receiveTask = Task.Run(() => ReceiveLoopAsync(_cts.Token));
-        StatusChanged?.Invoke("conectado");
     }
 
     public async Task SendAudioAsync(byte[] pcm16k, CancellationToken ct)
@@ -148,6 +167,30 @@ public sealed class GeminiLiveClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Manual VAD signal. <paramref name="start"/>=true sends activityStart (before the audio of
+    /// an utterance), false sends activityEnd (when the user releases push-to-talk). This closes
+    /// the turn so the model finalizes the translation and stops generating.
+    /// </summary>
+    public async Task SendActivityAsync(bool start, CancellationToken ct)
+    {
+        if (_ws is not { State: WebSocketState.Open } || !IsReady) return;
+        var msg = new JsonObject
+        {
+            ["realtimeInput"] = new JsonObject
+            {
+                [start ? "activityStart" : "activityEnd"] = new JsonObject()
+            }
+        };
+        try
+        {
+            await SendJsonAsync(msg, ct);
+            Log.Debug(Tag, start ? "activityStart enviado." : "activityEnd enviado.");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log.Error(Tag, "Erro ao enviar activity", ex); }
+    }
+
     private async Task SendJsonAsync(JsonObject obj, CancellationToken ct)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(obj.ToJsonString());
@@ -159,7 +202,43 @@ public sealed class GeminiLiveClient : IDisposable
         finally { _sendLock.Release(); }
     }
 
+    /// <summary>
+    /// Outer loop: receive messages until the socket drops, then transparently reconnect
+    /// (the Live API closes the session periodically / sends GoAway). Only an explicit
+    /// CloseAsync/Dispose, or cancellation, stops it. Mirrors the reconnect logic in
+    /// Google's official LiveKit translate example.
+    /// </summary>
     private async Task ReceiveLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && !_closing)
+        {
+            bool closedByServer = await ReceiveUntilClosedAsync(ct);
+            if (ct.IsCancellationRequested || _closing) break;
+
+            // Reconnect with a short backoff so a long meeting keeps translating.
+            IsReady = false;
+            long attempt = Interlocked.Increment(ref _reconnects);
+            Log.Warn(Tag, $"Sessão caiu ({(closedByServer ? "fechada pelo servidor" : "erro de socket")}) — reconectando (tentativa #{attempt})…");
+            StatusChanged?.Invoke("reconectando…");
+            try { await Task.Delay(1000, ct); } catch { break; }
+            try
+            {
+                await OpenAndSetupAsync(ct);
+                Log.Info(Tag, "Reconectado — aguardando setupComplete…");
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Log.Error(Tag, "Falha ao reconectar — nova tentativa em breve", ex);
+                ErrorOccurred?.Invoke("Reconexão falhou: " + ex.Message);
+                // Loop again (after the next delay) to keep retrying.
+            }
+        }
+        Log.Info(Tag, "Loop de recepção (com reconexão) encerrado.");
+    }
+
+    /// <summary>Receives frames on the current socket until it closes/errors. Returns true if the server closed it.</summary>
+    private async Task<bool> ReceiveUntilClosedAsync(CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
         using var ms = new MemoryStream();
@@ -179,9 +258,8 @@ public sealed class GeminiLiveClient : IDisposable
                         Log.Warn(Tag, $"⛔ Servidor FECHOU a conexão: code={(int?)_ws.CloseStatus} ({_ws.CloseStatus}) " +
                                       $"descrição='{_ws.CloseStatusDescription}'");
                         StatusChanged?.Invoke($"fechado pelo servidor: {_ws.CloseStatusDescription ?? _ws.CloseStatus?.ToString()}");
-                        ErrorOccurred?.Invoke(_ws.CloseStatusDescription ?? "Conexão fechada pelo servidor");
                         try { await _ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); } catch { }
-                        return;
+                        return true;
                     }
                     ms.Write(buffer, 0, result.Count);
                 }
@@ -189,19 +267,20 @@ public sealed class GeminiLiveClient : IDisposable
 
                 HandleMessage(ms.ToArray());
             }
-            Log.Info(Tag, $"Loop de recepção encerrado (ws={_ws?.State}).");
+            Log.Info(Tag, $"Recepção encerrada (ws={_ws?.State}).");
+            return true;
         }
-        catch (OperationCanceledException) { Log.Debug(Tag, "Recepção cancelada."); }
+        catch (OperationCanceledException) { Log.Debug(Tag, "Recepção cancelada."); return false; }
         catch (WebSocketException wex)
         {
             Log.Error(Tag, $"WebSocketException (wsErr={wex.WebSocketErrorCode}, wsState={_ws?.State}, " +
                            $"closeCode={(int?)_ws?.CloseStatus}, closeDesc='{_ws?.CloseStatusDescription}')", wex);
-            ErrorOccurred?.Invoke(wex.Message);
+            return false;
         }
         catch (Exception ex)
         {
             Log.Error(Tag, "Erro no loop de recepção", ex);
-            ErrorOccurred?.Invoke(ex.Message);
+            return false;
         }
     }
 
@@ -322,6 +401,7 @@ public sealed class GeminiLiveClient : IDisposable
 
     public async Task CloseAsync()
     {
+        _closing = true;
         IsReady = false;
         Log.Info(Tag, $"Fechando sessão. Enviados {_audioChunksSent} / descartados {_audioChunksDropped} chunks; " +
                       $"recebidos {_audioChunksReceived} chunks de áudio em {_messagesReceived} mensagens.");
@@ -336,6 +416,7 @@ public sealed class GeminiLiveClient : IDisposable
 
     public void Dispose()
     {
+        _closing = true;
         try { _cts?.Cancel(); } catch { }
         try { _ws?.Dispose(); } catch { }
         _sendLock.Dispose();

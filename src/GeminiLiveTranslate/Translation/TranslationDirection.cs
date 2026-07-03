@@ -1,7 +1,9 @@
+using System.IO;
 using GeminiLiveTranslate.Audio;
 using GeminiLiveTranslate.Gemini;
 using GeminiLiveTranslate.Logging;
 using NAudio.CoreAudioApi;
+using NAudio.Wave;
 
 namespace GeminiLiveTranslate.Translation;
 
@@ -15,10 +17,38 @@ public sealed class TranslationDirection : IDisposable
     private readonly GeminiLiveClient _client;
     private readonly DuckingOutput _player;
     private readonly CancellationTokenSource _cts = new();
+    private readonly bool _passthrough;
+    private readonly bool _manualActivity;
+    private readonly object _recLock = new();
+    private WaveFileWriter? _recorder;
     private bool _disposed;
 
     public string Name { get; }
 
+    /// <summary>When true, the capture is muted (no audio sent to Gemini) — used for push-to-talk.</summary>
+    public bool MicMuted { get => _source.Muted; set => _source.Muted = value; }
+
+    /// <summary>Original volume (0..1) while the translation speaks; adjustable live from the UI.</summary>
+    public float DuckLevel { get => _player.DuckLevel; set => _player.DuckLevel = value; }
+
+    /// <summary>Push-to-talk pressed: open the turn (manual VAD) and unmute the mic.</summary>
+    public async Task BeginTalkAsync()
+    {
+        if (_manualActivity)
+            await _client.SendActivityAsync(start: true, _cts.Token);
+        MicMuted = false;
+    }
+
+    /// <summary>Push-to-talk released: stop the mic and close the turn so the model finalizes and stops.</summary>
+    public async Task EndTalkAsync()
+    {
+        MicMuted = true;
+        if (_manualActivity)
+            await _client.SendActivityAsync(start: false, _cts.Token);
+    }
+
+    /// <summary>Translated audio (24 kHz mono PCM16) as it is produced — the same bytes that are played to the listener. Used by the conversation recorder.</summary>
+    public event Action<byte[]>? TranslationAudio;
     /// <summary>Translated text the listener will hear (output transcript).</summary>
     public event Action<string>? TranslatedText;
     /// <summary>Original recognized text (input transcript).</summary>
@@ -33,14 +63,25 @@ public sealed class TranslationDirection : IDisposable
         MMDevice inputDevice, bool loopback,
         MMDevice outputDevice,
         string apiKey, string model, string targetLang, bool echoTargetLanguage,
-        bool continuousStreaming = true, bool duckOriginal = true)
+        bool continuousStreaming = true, bool duckOriginal = true,
+        bool recordTranslation = false, bool manualActivity = false,
+        float duckLevel = 0.18f,
+        bool dropPlaybackBacklog = true, int maxPlaybackLatencyMs = 5000)
     {
         Name = name;
+        _passthrough = duckOriginal;
+        _manualActivity = manualActivity;
         _source = new AudioCaptureSource(inputDevice, loopback) { Tag = name, ContinuousMode = continuousStreaming };
-        _player = new DuckingOutput(outputDevice) { Tag = name, PassthroughOriginal = duckOriginal };
-        _client = new GeminiLiveClient(apiKey, model, targetLang, echoTargetLanguage) { Tag = name };
+        _player = new DuckingOutput(outputDevice)
+        {
+            Tag = name, PassthroughOriginal = duckOriginal, DuckLevel = duckLevel,
+            DropBacklog = dropPlaybackBacklog, MaxLatencyMs = maxPlaybackLatencyMs
+        };
+        _client = new GeminiLiveClient(apiKey, model, targetLang, echoTargetLanguage, manualActivity) { Tag = name };
 
-        _client.AudioReceived += pcm => _player.EnqueueTranslation(pcm);
+        if (recordTranslation) TryStartRecorder();
+
+        _client.AudioReceived += OnTranslationAudio;
         _client.Interrupted += () => _player.ClearTranslation();
         _client.UsageUpdated += (p, r, t) => Usage?.Invoke(p, r, t);
         _client.OutputTranscript += t => TranslatedText?.Invoke(t);
@@ -54,10 +95,45 @@ public sealed class TranslationDirection : IDisposable
 
     private async void OnChunk(byte[] chunk)
     {
-        // Passthrough the original so the player can play it (ducked) under the translation.
-        _player.EnqueueOriginal(chunk);
+        // Outgoing (my voice → the meeting) is a clean mirror of the incoming path: capture →
+        // Gemini → play ONLY the translation. The original passthrough exists solely for the
+        // incoming "Google-Meet" effect (hear the other person quietly under the translation);
+        // on the outgoing side it must never play, or the meeting would hear your untranslated
+        // voice. No "mute while translating" guard either: Gemini translates simultaneously
+        // (emits while you speak), so muting during playback would clip your sentence — the
+        // loop is prevented by keeping capture and playback on different devices.
+        if (_passthrough)
+            _player.EnqueueOriginal(chunk);
         try { await _client.SendAudioAsync(chunk, _cts.Token); }
         catch { /* swallowed; surfaced via Status on the send path */ }
+    }
+
+    /// <summary>Plays the translated 24 kHz PCM and, if recording, writes it untouched to a .wav.</summary>
+    private void OnTranslationAudio(byte[] pcm24k)
+    {
+        _player.EnqueueTranslation(pcm24k);
+        TranslationAudio?.Invoke(pcm24k);
+        lock (_recLock)
+        {
+            try { _recorder?.Write(pcm24k, 0, pcm24k.Length); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Records the exact audio Gemini returns (24 kHz mono PCM16) to a .wav in the log folder,
+    /// before VoiceMeeter / the meeting app touch it. Lets us prove whether any robotic/choppy
+    /// sound is produced by the app or added later in the routing chain.
+    /// </summary>
+    private void TryStartRecorder()
+    {
+        try
+        {
+            string dir = string.IsNullOrEmpty(Log.LogFolder) ? Path.GetTempPath() : Log.LogFolder;
+            string path = Path.Combine(dir, $"traducao-{Name}-{DateTime.Now:yyyyMMdd-HHmmss}.wav");
+            _recorder = new WaveFileWriter(path, new WaveFormat(24000, 16, 1));
+            Log.Info(Name, $"Gravando a tradução pura (pré-VoiceMeeter) em: {path}");
+        }
+        catch (Exception ex) { Log.Error(Name, "Não foi possível iniciar a gravação .wav", ex); }
     }
 
     public async Task StartAsync()
@@ -85,6 +161,11 @@ public sealed class TranslationDirection : IDisposable
         try { _source.Dispose(); } catch { }
         try { _client.Dispose(); } catch { }
         try { _player.Dispose(); } catch { }
+        lock (_recLock)
+        {
+            try { _recorder?.Dispose(); } catch { }   // finalizes the .wav header
+            _recorder = null;
+        }
         try { _cts.Dispose(); } catch { }
     }
 }

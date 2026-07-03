@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using GeminiLiveTranslate.Audio;
@@ -55,7 +56,51 @@ public partial class MainWindow : Window
         _fxTimer.Start();
         _ = RefreshFxAsync();
 
+        // Push-to-talk: hold SPACE (or the Talk button) to unmute your mic.
+        PreviewKeyDown += OnPreviewKeyDown;
+        PreviewKeyUp += OnPreviewKeyUp;
+
         Closing += (_, _) => { Log.Info("UI", "Fechando janela."); SaveSettings(); _ = _engine.StopAsync(); };
+    }
+
+    // ---------- Push-to-talk ----------
+    private bool _talking;
+
+    private void StartTalking()
+    {
+        if (_talking || !_engine.Running || !_engine.HasOutgoing) return;
+        _talking = true;
+        _ = _engine.OutgoingTalkStartAsync();   // manual-VAD activityStart + unmute
+        TalkButton.Content = "🎙️ Falando… (solte para parar)";
+        TalkButton.Background = (Brush)FindResource("Accent");
+        TalkButton.Foreground = (Brush)FindResource("AccentText");
+    }
+
+    private void StopTalking()
+    {
+        if (!_talking) return;
+        _talking = false;
+        _ = _engine.OutgoingTalkEndAsync();      // mute + manual-VAD activityEnd (closes the turn)
+        TalkButton.Content = "🎤 Segure para falar (ESPAÇO)";
+        TalkButton.Background = (Brush)FindResource("Field");
+        TalkButton.Foreground = (Brush)FindResource("Text");
+    }
+
+    private void OnTalkDown(object sender, MouseButtonEventArgs e) => StartTalking();
+    private void OnTalkUp(object sender, MouseButtonEventArgs e) => StopTalking();
+    private void OnTalkLeave(object sender, MouseEventArgs e) => StopTalking();
+
+    private void OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Don't steal SPACE while typing in a text field.
+        if (e.Key != Key.Space || Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is PasswordBox)
+            return;
+        if (_engine.Running && _engine.HasOutgoing) { StartTalking(); e.Handled = true; }
+    }
+
+    private void OnPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Space && _talking) { StopTalking(); e.Handled = true; }
     }
 
     private async Task RefreshFxAsync()
@@ -78,13 +123,50 @@ public partial class MainWindow : Window
         LogBox.AppendText(sb.ToString());
 
         // Keep the box from growing without bound (~800 lines).
+        // LineCount counts wrapped display lines, so it can exceed 800 while the actual
+        // '\n'-separated entries are fewer than 600 — guard before slicing or `^600..`
+        // resolves to a negative start index and throws ArgumentOutOfRangeException.
         if (LogBox.LineCount > 800)
         {
             var lines = LogBox.Text.Split('\n');
-            LogBox.Text = string.Join("\n", lines[^600..]);
+            if (lines.Length > 600)
+                LogBox.Text = string.Join("\n", lines[^600..]);
         }
         if (AutoScrollLog.IsChecked == true)
             LogBox.ScrollToEnd();
+    }
+
+    // ---------- Conversation recording ----------
+    private void OnRecordToggle(object sender, RoutedEventArgs e)
+    {
+        if (!_engine.Running) return;
+        try
+        {
+            if (_engine.IsRecording)
+            {
+                var path = _engine.StopRecording();
+                SetRecordingUi(false);
+                StatusText.Text = path is null ? "Gravação parada." : $"Gravação salva em: {path}";
+            }
+            else
+            {
+                var path = _engine.StartRecording();
+                SetRecordingUi(true);
+                StatusText.Text = $"Gravando a conversa em: {path}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("UI", "Falha na gravação da conversa", ex);
+            StatusText.Text = "Erro ao gravar: " + ex.Message;
+        }
+    }
+
+    private void SetRecordingUi(bool recording)
+    {
+        RecordButton.Content = recording ? "⏹ Parar gravação" : "⏺ Gravar conversa";
+        RecordButton.Background = (Brush)FindResource(recording ? "Warn" : "Field");
+        RecordButton.Foreground = (Brush)FindResource(recording ? "AccentText" : "Text");
     }
 
     private void OnOpenLogFolder(object sender, RoutedEventArgs e) => Log.OpenFolder();
@@ -193,6 +275,10 @@ public partial class MainWindow : Window
         EnableOutgoingCheck.IsChecked = _settings.EnableOutgoing;
         ContinuousCheck.IsChecked = _settings.ContinuousStreaming;
         DuckCheck.IsChecked = _settings.DuckOriginal;
+        AutoDefaultCheck.IsChecked = _settings.AutoSetDefaultDevice;
+        DuckLevelSlider.Value = Math.Clamp(_settings.DuckOriginalLevel, 0, DuckLevelSlider.Maximum);
+        UpdateDuckLevelText();
+        DuckLevelPanel.IsEnabled = _settings.DuckOriginal;
 
         _cost.InputUsdPerMillion = _settings.InputUsdPerMillion;
         _cost.OutputUsdPerMillion = _settings.OutputUsdPerMillion;
@@ -236,6 +322,8 @@ public partial class MainWindow : Window
         _settings.EnableOutgoing = EnableOutgoingCheck.IsChecked == true;
         _settings.ContinuousStreaming = ContinuousCheck.IsChecked == true;
         _settings.DuckOriginal = DuckCheck.IsChecked == true;
+        _settings.AutoSetDefaultDevice = AutoDefaultCheck.IsChecked == true;
+        _settings.DuckOriginalLevel = DuckLevelSlider.Value;
         _settings.MeetingOutputDeviceId = (MeetingDeviceCombo.SelectedItem as AudioDeviceInfo)?.Id;
         _settings.HeadphonesDeviceId = (HeadphonesCombo.SelectedItem as AudioDeviceInfo)?.Id;
         _settings.MicDeviceId = (MicCombo.SelectedItem as AudioDeviceInfo)?.Id;
@@ -257,6 +345,82 @@ public partial class MainWindow : Window
     {
         if (_initializing) return;
         UpdateFeedbackWarning();
+    }
+
+    // ---------- Ducking level ----------
+    private void OnDuckToggled(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        DuckLevelPanel.IsEnabled = DuckCheck.IsChecked == true;
+    }
+
+    private void OnDuckLevelChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded) return;
+        UpdateDuckLevelText();
+        // Apply live so the user can tune while listening.
+        _engine.IncomingDuckLevel = (float)DuckLevelSlider.Value;
+        _settings.DuckOriginalLevel = DuckLevelSlider.Value;
+    }
+
+    private void UpdateDuckLevelText() =>
+        DuckLevelText.Text = DuckLevelSlider.Value <= 0.001
+            ? "original mudo"
+            : $"original a {DuckLevelSlider.Value:P0}";
+
+    // ---------- Setup guide ----------
+    private void OnShowGuide(object sender, RoutedEventArgs e)
+    {
+        string meeting = NameOf(MeetingDeviceCombo);
+        string headphones = NameOf(HeadphonesCombo);
+        string cableRender = NameOf(VirtualMicCombo);
+        var virtualId = (VirtualMicCombo.SelectedItem as AudioDeviceInfo)?.Id;
+        string cableCapture = virtualId is not null
+            ? AudioDeviceService.CaptureCounterpart(virtualId)?.Name ?? "(lado de captura do seu cabo, ex.: CABLE Output)"
+            : "(lado de captura do seu cabo, ex.: CABLE Output)";
+        bool outgoing = EnableOutgoingCheck.IsChecked == true;
+        bool autoDefault = AutoDefaultCheck.IsChecked == true;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("COMO ROTEAR O ÁUDIO");
+        sb.AppendLine();
+        sb.AppendLine("Neste app:");
+        sb.AppendLine($"  • Áudio da reunião (capturar de): {meeting}");
+        sb.AppendLine($"  • Ouvir a tradução em: {headphones}");
+        if (outgoing) sb.AppendLine($"  • Enviar minha voz traduzida para: {cableRender}");
+        sb.AppendLine();
+        sb.AppendLine("No Teams / Google Meet / WhatsApp / Zoom, nas configurações de áudio:");
+        sb.AppendLine($"  • Alto-falante (saída) → {meeting}");
+        sb.AppendLine("     (faz o som da reunião entrar no app para ser traduzido)");
+        if (outgoing)
+        {
+            sb.AppendLine($"  • Microfone (entrada) → {cableCapture}");
+            sb.AppendLine("     (faz a reunião transmitir a SUA voz já traduzida)");
+        }
+        else
+        {
+            sb.AppendLine("  • Microfone (entrada) → seu microfone real (tradução da sua voz está desativada)");
+        }
+        sb.AppendLine();
+        if (autoDefault)
+        {
+            sb.AppendLine("Como 'Definir dispositivo padrão' está ligado, apps que seguem o padrão do");
+            sb.AppendLine("Windows (WhatsApp, normalmente Teams) se ajustam sozinhos ao Iniciar.");
+            sb.AppendLine("O Google Meet no navegador NÃO segue o padrão: ajuste o microfone/alto-falante");
+            sb.AppendLine("uma vez nas configurações da chamada (o Chrome lembra por site).");
+        }
+        else
+        {
+            sb.AppendLine("Dica: ligue 'Definir dispositivo padrão do Windows ao iniciar' para que");
+            sb.AppendLine("WhatsApp/Teams se ajustem sozinhos. O Meet no navegador continua manual,");
+            sb.AppendLine("mas o Chrome lembra a escolha por site.");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Importante: o 'Alto-falante' da reunião e o cabo da sua voz precisam ser");
+        sb.AppendLine("dispositivos DIFERENTES, senão a tradução volta para a entrada e entra em loop.");
+
+        MessageBox.Show(this, sb.ToString(), "Guia de configuração de áudio",
+            MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void UpdateFeedbackWarning()
@@ -324,7 +488,15 @@ public partial class MainWindow : Window
         StatusText.Foreground = (Brush)FindResource("Muted");
         foreach (var c in new Control[] { MeetingDeviceCombo, HeadphonesCombo, MicCombo,
                  VirtualMicCombo, IncomingLangCombo, OutgoingLangCombo, EnableOutgoingCheck,
-                 ContinuousCheck, DuckCheck, RefreshButton })
+                 ContinuousCheck, DuckCheck, AutoDefaultCheck, RefreshButton })
             c.IsEnabled = !running;
+
+        // Talk button only matters while running with the outgoing direction active.
+        if (!running) StopTalking();
+        TalkButton.IsEnabled = running && _engine.HasOutgoing;
+
+        // Recording is only meaningful while translating; StopAsync already finalized any .wav.
+        RecordButton.IsEnabled = running;
+        if (!running) SetRecordingUi(false);
     }
 }

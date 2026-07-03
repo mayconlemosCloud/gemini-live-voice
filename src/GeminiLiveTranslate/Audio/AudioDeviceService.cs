@@ -34,6 +34,42 @@ public static class AudioDeviceService
         return dev;
     }
 
+    /// <summary>
+    /// Finds the capture endpoint that pairs with a virtual-cable render endpoint — e.g. the
+    /// render "CABLE Input (VB-Audio Virtual Cable)" pairs with the capture "CABLE Output
+    /// (VB-Audio Virtual Cable)". Matches on the shared brand suffix in parentheses, so the
+    /// meeting app's microphone can be pointed at the side that carries your translated voice.
+    /// Returns null when no matching capture device is found.
+    /// </summary>
+    public static AudioDeviceInfo? CaptureCounterpart(string renderId)
+    {
+        string? renderName;
+        try { using var dev = GetById(renderId); renderName = dev.FriendlyName; }
+        catch { return null; }
+
+        var brand = ParenSuffix(renderName);
+        var captures = GetDevices(DataFlow.Capture);
+
+        // Prefer a capture device sharing the brand suffix (e.g. "(VB-Audio Virtual Cable)").
+        var match = brand is not null
+            ? captures.FirstOrDefault(d => string.Equals(ParenSuffix(d.Name), brand, StringComparison.OrdinalIgnoreCase))
+            : null;
+        // Fall back to any capture endpoint that looks like a virtual cable.
+        match ??= captures.FirstOrDefault(d =>
+            d.Name.Contains("CABLE", StringComparison.OrdinalIgnoreCase) ||
+            d.Name.Contains("VoiceMeeter", StringComparison.OrdinalIgnoreCase) ||
+            d.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase));
+        return match;
+    }
+
+    /// <summary>Returns the "(…)" portion of a device name, or null if there is none.</summary>
+    private static string? ParenSuffix(string name)
+    {
+        int open = name.IndexOf('(');
+        int close = name.LastIndexOf(')');
+        return open >= 0 && close > open ? name.Substring(open, close - open + 1) : null;
+    }
+
     public static AudioDeviceInfo? DefaultDevice(DataFlow flow)
     {
         using var enumerator = new MMDeviceEnumerator();

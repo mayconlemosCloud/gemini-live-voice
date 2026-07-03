@@ -26,6 +26,15 @@ public sealed class DuckingOutput : IDisposable
     /// <summary>Drop translation backlog above this so what you hear stays near real time.</summary>
     public int MaxLatencyMs { get; set; } = 1200;
 
+    /// <summary>
+    /// When true (incoming), backlog above <see cref="MaxLatencyMs"/> is dropped to stay near
+    /// real time. When false (outgoing), the backlog is NEVER dropped: the listener must hear the
+    /// FULL translated sentence — truncating it mid-word is far worse than a little extra latency,
+    /// and push-to-talk already bounds how much can accumulate. Dropping here was the cause of the
+    /// other person hearing choppy/cut-off translations.
+    /// </summary>
+    public bool DropBacklog { get; set; } = true;
+
     /// <summary>When true, the original audio is mixed in (ducked). When false, only the translation plays.</summary>
     public bool PassthroughOriginal { get => _mix.Passthrough; set => _mix.Passthrough = value; }
 
@@ -83,7 +92,7 @@ public sealed class DuckingOutput : IDisposable
     /// <summary>Feed translated audio from Gemini: 24 kHz mono PCM16.</summary>
     public void EnqueueTranslation(byte[] pcm24k)
     {
-        if (_transBuf.BufferedDuration.TotalMilliseconds > MaxLatencyMs)
+        if (DropBacklog && _transBuf.BufferedDuration.TotalMilliseconds > MaxLatencyMs)
         {
             Log.Warn(Tag, $"Atraso de tradução > {MaxLatencyMs} ms — descartando backlog para manter tempo real.");
             _transBuf.ClearBuffer();
@@ -115,9 +124,21 @@ internal sealed class DuckMixProvider : ISampleProvider
     private float[] _t = Array.Empty<float>();
     private float[] _o = Array.Empty<float>();
     private float _gain = 1f;
+    private bool _playing;   // jitter-buffer state: are we currently draining a primed segment?
 
     public bool Passthrough { get; set; } = true;
     public float DuckLevel { get; set; } = 0.18f;
+
+    /// <summary>
+    /// Jitter buffer (pre-roll): how much translated audio must accumulate before we start
+    /// draining it. Gemini streams the translation in small bursts over the WebSocket; without a
+    /// cushion, any network jitter empties the buffer mid-word and (because the buffer reads
+    /// "fully" with silence) punches silence holes into the speech — the "robotic"/choppy sound.
+    /// A small lead lets each utterance play out smoothly; it re-arms when the segment drains, so
+    /// only the (inaudible) gaps BETWEEN utterances carry the small added latency.
+    /// </summary>
+    public int PreRollMs { get; set; } = 150;
+
     public WaveFormat WaveFormat => _orig.WaveFormat;
 
     public DuckMixProvider(ISampleProvider orig, ISampleProvider trans, BufferedWaveProvider transBuf)
@@ -132,10 +153,22 @@ internal sealed class DuckMixProvider : ISampleProvider
         if (_t.Length < count) { _t = new float[count]; _o = new float[count]; }
         Array.Clear(_t, 0, count);
         Array.Clear(_o, 0, count);
-        _trans.Read(_t, 0, count);
+
+        // Jitter buffer: don't drain the translation until a small cushion has built up, so a brief
+        // network gap doesn't insert silence mid-word. Re-arm once the segment has fully drained,
+        // giving the next utterance its own pre-roll. While not playing we leave _t as silence
+        // WITHOUT advancing _trans, so no buffered samples are lost — only delayed.
+        double bufferedMs = _transBuf.BufferedDuration.TotalMilliseconds;
+        if (!_playing && bufferedMs >= PreRollMs) _playing = true;
+        if (_playing)
+        {
+            _trans.Read(_t, 0, count);
+            if (bufferedMs <= 1.0) _playing = false; // drained → re-prime before the next segment
+        }
+
         if (Passthrough) _orig.Read(_o, 0, count);
 
-        bool active = _transBuf.BufferedDuration.TotalMilliseconds > 60;
+        bool active = _playing;
         float target = active ? DuckLevel : 1f;
         int channels = Math.Max(1, WaveFormat.Channels);
         float step = 1f / (WaveFormat.SampleRate * 0.03f); // ~30 ms ramp, no clicks

@@ -33,6 +33,16 @@ public sealed class AppSettings
     /// <summary>Play the original audio (ducked) under the translation, like Google Meet. Also routes the original through the app, which prevents capture feedback.</summary>
     public bool DuckOriginal { get; set; } = true;
 
+    /// <summary>Original volume (0..1) while the translation is speaking. Lower = translation stands out more. Default 0.18 ≈ 18%.</summary>
+    public double DuckOriginalLevel { get; set; } = 0.18;
+
+    /// <summary>
+    /// When true, on Start the app sets the virtual cable as the Windows default communication
+    /// device(s) so meeting apps (WhatsApp, Teams…) pick the right route without manual tweaking,
+    /// and restores the previous defaults on Stop. Browser-based Meet still chooses per-tab.
+    /// </summary>
+    public bool AutoSetDefaultDevice { get; set; } = false;
+
     // --- Cost estimate (the Gemini API has no real-time spend endpoint; we estimate from tokens) ---
     /// <summary>Your spending cap, in BRL. 0 = no limit set.</summary>
     public double BudgetBrl { get; set; } = 0;
