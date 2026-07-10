@@ -41,7 +41,32 @@ public sealed class DuckingOutput : IDisposable
     /// <summary>Original volume (0..1) while the translation is speaking.</summary>
     public float DuckLevel { get => _mix.DuckLevel; set => _mix.DuckLevel = value; }
 
-    public bool TranslationActive => _transBuf.BufferedDuration.TotalMilliseconds > 60;
+    /// <summary>
+    /// Volume (0..1) applied to the TRANSLATION itself. Lowered while the user holds
+    /// push-to-talk so the incoming translation playing on speakers/headphones doesn't leak
+    /// into the open mic and get re-translated (echo loop). Ramped in the mixer, no clicks.
+    /// </summary>
+    public float TranslationDuck { get => _mix.TranslationDuck; set => _mix.TranslationDuck = value; }
+
+    /// <summary>
+    /// Buffer above which SILENT translation chunks are discarded instead of queued — a graceful
+    /// backlog reducer only. The translate model streams its output continuously in real time
+    /// with the silence embedded as samples, and that silence IS the natural word/phrase pacing:
+    /// trimming it aggressively (250 ms) made playback outrun the realtime stream, starving the
+    /// buffer mid-sentence and producing choked word-by-word speech. Keep this comfortably above
+    /// the steady-state buffer (~600 ms) so it only kicks in when we are genuinely behind.
+    /// </summary>
+    public int TrimSilenceAboveMs { get; set; } = 1000;
+
+    private long _audibleUntilTicks;
+    private long _trimmed;
+
+    /// <summary>
+    /// True while translated SPEECH (not the model's embedded silence) is queued or still being
+    /// played. Unlike buffer occupancy — which is ~always non-empty given the continuous stream —
+    /// this only covers audible content, so it is safe to key anti-echo suppression on it.
+    /// </summary>
+    public bool TranslationAudible => DateTime.UtcNow.Ticks < Volatile.Read(ref _audibleUntilTicks);
 
     /// <summary>
     /// Fires on the render thread with the EXACT samples being played (post-mix, post-duck) as
@@ -105,15 +130,48 @@ public sealed class DuckingOutput : IDisposable
     /// <summary>Feed translated audio from Gemini: 24 kHz mono PCM16.</summary>
     public void EnqueueTranslation(byte[] pcm24k)
     {
-        if (DropBacklog && _transBuf.BufferedDuration.TotalMilliseconds > MaxLatencyMs)
+        double bufferedMs = _transBuf.BufferedDuration.TotalMilliseconds;
+        bool silent = Rms16(pcm24k) < 0.002f;
+
+        if (silent && bufferedMs > TrimSilenceAboveMs)
+        {
+            if (Interlocked.Increment(ref _trimmed) % 200 == 1)
+                Log.Debug(Tag, $"Aparando silêncio embutido da tradução (buffer {bufferedMs:F0} ms, total {_trimmed}).");
+            return;
+        }
+
+        if (DropBacklog && bufferedMs > MaxLatencyMs)
         {
             Log.Warn(Tag, $"Atraso de tradução > {MaxLatencyMs} ms — descartando backlog para manter tempo real.");
             _transBuf.ClearBuffer();
         }
         _transBuf.AddSamples(pcm24k, 0, pcm24k.Length);
+
+        if (!silent)
+        {
+            // Audible until everything queued so far (including this chunk) has played out.
+            long until = DateTime.UtcNow.AddMilliseconds(
+                _transBuf.BufferedDuration.TotalMilliseconds + 250).Ticks;
+            Volatile.Write(ref _audibleUntilTicks, until);
+        }
+
         long n = Interlocked.Increment(ref _transEnq);
         if (n == 1) Log.Info(Tag, "Primeira tradução na fila de reprodução.");
         if (n % 50 == 0) Log.Debug(Tag, $"Tradução: {n} chunks, buffer {_transBuf.BufferedDuration.TotalMilliseconds:F0} ms.");
+    }
+
+    private static float Rms16(byte[] pcm)
+    {
+        int samples = pcm.Length / 2;
+        if (samples == 0) return 0f;
+        double sum = 0;
+        for (int i = 0; i < samples; i++)
+        {
+            short s = (short)(pcm[i * 2] | (pcm[i * 2 + 1] << 8));
+            float f = s / 32768f;
+            sum += f * f;
+        }
+        return (float)Math.Sqrt(sum / samples);
     }
 
     public void ClearTranslation() => _transBuf.ClearBuffer();
@@ -163,6 +221,12 @@ internal sealed class DuckMixProvider : ISampleProvider
 
     public bool Passthrough { get; set; } = true;
     public float DuckLevel { get; set; } = 0.18f;
+    /// <summary>Target volume for the translation channel (see <see cref="DuckingOutput.TranslationDuck"/>).</summary>
+    public float TranslationDuck { get; set; } = 1f;
+    private float _tGain = 1f;
+    // Last time the translation channel actually rendered non-silent samples (see Read).
+    private long _lastAudibleTicks;
+    private static readonly long AudibleHoldTicks = TimeSpan.FromMilliseconds(400).Ticks;
 
     /// <summary>
     /// Jitter buffer (pre-roll): how much translated audio must accumulate before we start
@@ -199,23 +263,36 @@ internal sealed class DuckMixProvider : ISampleProvider
         {
             _trans.Read(_t, 0, count);
             if (bufferedMs <= 1.0) _playing = false; // drained → re-prime before the next segment
+
+            // Duck by CONTENT, not by buffer state: the model streams silence continuously, so
+            // "buffer non-empty" is ~always true and would pin the original at DuckLevel forever.
+            float max = 0f;
+            for (int i = 0; i < count; i++)
+            {
+                float a = _t[i] < 0 ? -_t[i] : _t[i];
+                if (a > max) max = a;
+            }
+            if (max > 0.005f) _lastAudibleTicks = DateTime.UtcNow.Ticks;
         }
 
         if (Passthrough) _orig.Read(_o, 0, count);
 
-        bool active = _playing;
+        bool active = (DateTime.UtcNow.Ticks - _lastAudibleTicks) < AudibleHoldTicks;
         float target = active ? DuckLevel : 1f;
         int channels = Math.Max(1, WaveFormat.Channels);
         float step = 1f / (WaveFormat.SampleRate * 0.03f); // ~30 ms ramp, no clicks
 
+        float tTarget = TranslationDuck;
         for (int i = 0; i < count; i++)
         {
             if (i % channels == 0)
             {
                 if (_gain < target) _gain = Math.Min(target, _gain + step);
                 else if (_gain > target) _gain = Math.Max(target, _gain - step);
+                if (_tGain < tTarget) _tGain = Math.Min(tTarget, _tGain + step);
+                else if (_tGain > tTarget) _tGain = Math.Max(tTarget, _tGain - step);
             }
-            float s = (Passthrough ? _o[i] * _gain : 0f) + _t[i];
+            float s = (Passthrough ? _o[i] * _gain : 0f) + _t[i] * _tGain;
             buffer[offset + i] = s > 1f ? 1f : s < -1f ? -1f : s;
         }
         return count;

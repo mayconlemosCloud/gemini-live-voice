@@ -31,6 +31,12 @@ public sealed class TranslationDirection : IDisposable
     /// <summary>Original volume (0..1) while the translation speaks; adjustable live from the UI.</summary>
     public float DuckLevel { get => _player.DuckLevel; set => _player.DuckLevel = value; }
 
+    /// <summary>True while translated SPEECH is queued/being played by this direction's player (the model's continuous silence stream doesn't count).</summary>
+    public bool IsTranslationAudible => _player.TranslationAudible;
+
+    /// <summary>Volume (0..1) of the translation playback; lowered while the user talks (anti-echo).</summary>
+    public float TranslationDuck { set => _player.TranslationDuck = value; }
+
     /// <summary>Push-to-talk pressed: open the turn (manual VAD) and unmute the mic.</summary>
     public async Task BeginTalkAsync()
     {
@@ -53,6 +59,10 @@ public sealed class TranslationDirection : IDisposable
     public WaveFormat RenderFormat => _player.RenderFormat;
     /// <summary>Original captured audio (16 kHz mono PCM16) sent to Gemini — the untranslated voice. On the incoming side it streams continuously; on the outgoing side only while you hold push-to-talk. Used by the conversation recorder.</summary>
     public event Action<byte[]>? CapturedAudio;
+    /// <summary>Optional gate: when it returns true, captured audio is NOT sent to the model (anti-echo). Playback/recording still happen; only the send is suppressed.</summary>
+    public Func<bool>? SuppressSend { get; set; }
+    /// <summary>True while your push-to-talk mic is armed (unmuted). Read by the engine's anti-echo guard.</summary>
+    public bool MicArmed => !MicMuted;
     /// <summary>Translated text the listener will hear (output transcript).</summary>
     public event Action<string>? TranslatedText;
     /// <summary>Original recognized text (input transcript).</summary>
@@ -75,7 +85,10 @@ public sealed class TranslationDirection : IDisposable
         Name = name;
         _passthrough = duckOriginal;
         _manualActivity = manualActivity;
-        _source = new AudioCaptureSource(inputDevice, loopback) { Tag = name, ContinuousMode = continuousStreaming };
+        // AutoGain on the physical mic only: field mics are far too quiet for good voice cloning
+        // (peaks around -30 dBFS). Loopback (meeting) audio is already at digital level.
+        _source = new AudioCaptureSource(inputDevice, loopback)
+        { Tag = name, ContinuousMode = continuousStreaming, AutoGain = !loopback };
         _player = new DuckingOutput(outputDevice)
         {
             Tag = name, PassthroughOriginal = duckOriginal, DuckLevel = duckLevel,
@@ -110,6 +123,10 @@ public sealed class TranslationDirection : IDisposable
         CapturedAudio?.Invoke(chunk);
         if (_passthrough)
             _player.EnqueueOriginal(chunk);
+        // Half-duplex anti-echo: while the OTHER direction is playing its translation, that audio
+        // leaks into this capture (speakers→mic, or VoiceMeeter/cable routing) and would be
+        // re-translated forever. Skip sending it to the model; playback/recording are untouched.
+        if (SuppressSend?.Invoke() == true) return;
         try { await _client.SendAudioAsync(chunk, _cts.Token); }
         catch { /* swallowed; surfaced via Status on the send path */ }
     }

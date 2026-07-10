@@ -1,0 +1,29 @@
+TRADUTOR DE REUNIOES - instalacao dos cabos de audio virtuais
+================================================================
+
+O app precisa de DOIS drivers de audio virtual para funcionar. Sao gratuitos
+(donationware) e so precisam ser instalados UMA VEZ neste computador.
+
+PASSO 1 - VB-CABLE
+  Entre na pasta "VB-CABLE" e execute:
+    VBCABLE_Setup_x64.exe   (a maioria dos PCs e 64 bits)
+    VBCABLE_Setup.exe       (so se o Windows for 32 bits)
+  Clique com o botao direito > "Executar como administrador", depois em
+  "Install". O Windows pode pedir confirmacao (SmartScreen/UAC) - e normal,
+  o driver nao e assinado pela Microsoft.
+
+PASSO 2 - Hi-Fi Cable ASIO Bridge
+  Entre na pasta "HiFiCable" e execute HiFiCableAsioBridgeSetup.exe.
+  Siga o assistente (Next, Next, Install).
+
+PASSO 3 - Reinicie o computador
+  Os dois drivers so funcionam de verdade depois do reboot.
+
+PASSO 4 - Abra o "Tradutor de Reunioes" no menu Iniciar
+  Cole sua API key e escolha os dispositivos de audio (veja o guia de
+  roteamento no README do projeto se tiver duvida em qual dispositivo
+  escolher).
+
+--------------------------------------------------------------
+VB-CABLE e um donationware de Vincent Burel: https://www.vb-cable.com
+Se usar bastante, considere fazer uma doacao aos autores.

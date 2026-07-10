@@ -165,7 +165,7 @@
             <!-- Outgoing transcript -->
             <DockPanel Grid.Row="3" Margin="0,14,0,0">
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
-                    <Button x:Name="TalkButton" DockPanel.Dock="Right" Content="🎤 Segure para falar (ESPAÇO)"
+                    <Button x:Name="TalkButton" DockPanel.Dock="Right" Content="🎤 Falar: F8 (ou segure ESPAÇO)"
                             Padding="12,6" FontWeight="SemiBold" IsEnabled="False"
                             Background="{StaticResource Field}" Foreground="{StaticResource Text}" BorderBrush="#44444C"
                             PreviewMouseLeftButtonDown="OnTalkDown" PreviewMouseLeftButtonUp="OnTalkUp"

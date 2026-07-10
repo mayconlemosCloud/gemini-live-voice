@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using GeminiLiveTranslate.Audio;
 using GeminiLiveTranslate.Billing;
 using GeminiLiveTranslate.Config;
+using GeminiLiveTranslate.Input;
 using GeminiLiveTranslate.Logging;
 using GeminiLiveTranslate.Translation;
 using NAudio.CoreAudioApi;
@@ -26,6 +27,10 @@ public partial class MainWindow : Window
     private readonly CostMeter _cost = new();
     private readonly DispatcherTimer _fxTimer;
     private long _inTokens, _outTokens, _totalTokens;
+
+    // Global push-to-talk: F8 toggles the mic even when this window is not focused,
+    // so you can stay in Meet/Teams. See GlobalKeyHook.
+    private readonly GlobalKeyHook _talkHook = new(Key.F8);
 
     public MainWindow()
     {
@@ -60,18 +65,36 @@ public partial class MainWindow : Window
         PreviewKeyDown += OnPreviewKeyDown;
         PreviewKeyUp += OnPreviewKeyUp;
 
-        Closing += (_, _) => { Log.Info("UI", "Fechando janela."); SaveSettings(); _ = _engine.StopAsync(); };
+        // Global hands-free push-to-talk: F8 toggles the mic from anywhere,
+        // so you can stay focused on the Meet/Teams window.
+        _talkHook.Pressed += () => Dispatcher.Invoke(ToggleTalking);
+        _talkHook.Start();
+
+        Closing += (_, _) =>
+        {
+            Log.Info("UI", "Fechando janela.");
+            _talkHook.Dispose();
+            SaveSettings();
+            _ = _engine.StopAsync();
+        };
     }
 
     // ---------- Push-to-talk ----------
     private bool _talking;
+
+    // Fired by the global F8 hook: press once to open the mic, press again to close it.
+    private void ToggleTalking()
+    {
+        if (_talking) StopTalking();
+        else StartTalking();
+    }
 
     private void StartTalking()
     {
         if (_talking || !_engine.Running || !_engine.HasOutgoing) return;
         _talking = true;
         _ = _engine.OutgoingTalkStartAsync();   // manual-VAD activityStart + unmute
-        TalkButton.Content = "🎙️ Falando… (solte para parar)";
+        TalkButton.Content = "🎙️ Falando… (F8 para parar)";
         TalkButton.Background = (Brush)FindResource("Accent");
         TalkButton.Foreground = (Brush)FindResource("AccentText");
     }
@@ -81,7 +104,7 @@ public partial class MainWindow : Window
         if (!_talking) return;
         _talking = false;
         _ = _engine.OutgoingTalkEndAsync();      // mute + manual-VAD activityEnd (closes the turn)
-        TalkButton.Content = "🎤 Segure para falar (ESPAÇO)";
+        TalkButton.Content = "🎤 Falar: F8 (ou segure ESPAÇO)";
         TalkButton.Background = (Brush)FindResource("Field");
         TalkButton.Foreground = (Brush)FindResource("Text");
     }

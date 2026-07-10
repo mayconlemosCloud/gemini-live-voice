@@ -39,13 +39,38 @@ public sealed class TranslationEngine
         set { if (_outgoing is not null) _outgoing.MicMuted = value; }
     }
 
-    /// <summary>Push-to-talk pressed: opens the manual-VAD turn and unmutes your mic.</summary>
-    public Task OutgoingTalkStartAsync() => _outgoing?.BeginTalkAsync() ?? Task.CompletedTask;
+    /// <summary>
+    /// Push-to-talk pressed: opens the manual-VAD turn and unmutes your mic. Also ducks the
+    /// INCOMING translation playback hard while you talk — with an open mic (laptop array,
+    /// speakers) that playback leaks into the capture and gets re-translated, seeding the
+    /// repetition loop seen in the logs.
+    /// </summary>
+    public Task OutgoingTalkStartAsync()
+    {
+        if (_incoming is not null) _incoming.TranslationDuck = TalkTranslationDuck;
+        return _outgoing?.BeginTalkAsync() ?? Task.CompletedTask;
+    }
 
-    /// <summary>Push-to-talk released: mutes your mic and closes the turn so the model stops.</summary>
-    public Task OutgoingTalkEndAsync() => _outgoing?.EndTalkAsync() ?? Task.CompletedTask;
+    /// <summary>Push-to-talk released: mutes your mic, closes the turn and restores the incoming volume.</summary>
+    public Task OutgoingTalkEndAsync()
+    {
+        if (_incoming is not null) _incoming.TranslationDuck = 1f;
+        return _outgoing?.EndTalkAsync() ?? Task.CompletedTask;
+    }
 
     private long _inTokens, _outTokens, _totalTokens;
+
+    // Anti-echo (does NOT delay your speech): while you hold the talk key (mic armed), the meeting
+    // capture is paused so YOUR translation can't loop back through the meeting into the incoming
+    // side and get re-translated. Your mic is never gated, so talking has no added latency. A short
+    // tail keeps the pause a bit after you release, to swallow the immediate echo return.
+    private long _incomingResumeTicks;
+    // 1500 ms: the 500 ms tail was shorter than the outgoing translation's own playback plus the
+    // meeting round-trip, so the echo ("Hi, how are you?" coming back as meeting audio) slipped
+    // through after release — seen in the 2026-07-06 logs.
+    private const int EchoTailMs = 1500;
+    // Incoming translation volume while you hold push-to-talk (leak into the open mic).
+    private const float TalkTranslationDuck = 0.15f;
 
     public event Action<string>? IncomingText;   // what the other person said, in your language
     public event Action<string>? OutgoingText;    // what you said, in their language
@@ -81,7 +106,10 @@ public sealed class TranslationEngine
             "Entrada", meetingDevice, loopback: true, headphones,
             s.ApiKey, s.Model, s.IncomingTargetLang, echoTargetLanguage: false,
             continuousStreaming: s.ContinuousStreaming, duckOriginal: s.DuckOriginal,
-            duckLevel: (float)Math.Clamp(s.DuckOriginalLevel, 0, 1));
+            duckLevel: (float)Math.Clamp(s.DuckOriginalLevel, 0, 1),
+            // Keep what you hear close to real time: the old 5 s ceiling let the incoming
+            // translation lag several seconds behind the speaker before backlog was dropped.
+            maxPlaybackLatencyMs: 1500);
         _incoming.TranslatedText += t => IncomingText?.Invoke(t);
         _incoming.InputLevel += l => IncomingLevel?.Invoke(l);
         _incoming.Status += m => Status?.Invoke(m);
@@ -113,11 +141,16 @@ public sealed class TranslationEngine
             // the ORIGINAL (untranslated) audio must always be off here — otherwise your raw
             // voice leaks into the meeting alongside the translation ("como se eu estivesse
             // falando"). Ducking/passthrough only makes sense for the incoming direction.
+            // Server-side VAD (manualActivity:false) segments your speech automatically, exactly
+            // like the incoming side. Manual VAD only worked for HOLD-to-talk (release = activityEnd);
+            // with the F8 TOGGLE the turn stayed open while the mic kept streaming silence, so the
+            // model looped/hallucinated ("Hi, Stef, how are you doing? Oh, Stef…"). F8 now just
+            // arms/disarms the mic (mute) and the server closes each turn on the natural pause.
             _outgoing = new TranslationDirection(
                 "Saída", mic, loopback: false, virtualMic,
                 s.ApiKey, s.Model, s.OutgoingTargetLang, echoTargetLanguage: false,
                 continuousStreaming: s.ContinuousStreaming, duckOriginal: false,
-                recordTranslation: true, manualActivity: true,
+                recordTranslation: true, manualActivity: false,
                 // The other person must hear the FULL translated sentence: never drop backlog on
                 // the outgoing player (push-to-talk already bounds accumulation). Dropping was the
                 // cause of the translation reaching them choppy/cut off.
@@ -130,9 +163,25 @@ public sealed class TranslationEngine
             // from the player) plus your original mic voice (the meeting hears both live).
             _outgoing.RenderedAudio += (b, o, n) => _recorder?.WriteOutgoing(b, o, n);
             _outgoing.CapturedAudio += pcm => _recorder?.WriteOutgoingOriginal(pcm);
-            // Push-to-talk: start muted so leaked audio/noise is never translated. The UI
-            // unmutes the mic only while the talk key/button is held.
+            // Push-to-talk: start muted (disarmed) so leaked audio/noise is never translated.
+            // F8 (or holding the Talk button/SPACE) arms the mic; F8 again disarms it.
             _outgoing.MicMuted = true;
+
+            // Anti-echo (no latency on YOUR speech): pause the meeting capture while you're talking
+            // AND while your translated voice is still being played into the meeting, so the
+            // outgoing translation can't loop back through the meeting into the incoming side.
+            // (The translation keeps playing for seconds after you release the key — gating only
+            // on MicArmed let the returning "Hi, how are you?" get re-translated.) Your mic is
+            // never gated. A tail keeps the pause a bit longer to swallow the network echo.
+            _incoming.SuppressSend = () =>
+            {
+                if (_outgoing is { MicArmed: true } || _outgoing is { IsTranslationAudible: true })
+                {
+                    Volatile.Write(ref _incomingResumeTicks, DateTime.UtcNow.AddMilliseconds(EchoTailMs).Ticks);
+                    return true;
+                }
+                return DateTime.UtcNow.Ticks < Volatile.Read(ref _incomingResumeTicks);
+            };
         }
 
         try

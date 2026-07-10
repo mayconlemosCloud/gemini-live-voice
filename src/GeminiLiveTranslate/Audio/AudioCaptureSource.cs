@@ -43,8 +43,29 @@ public sealed class AudioCaptureSource : IDisposable
     /// </summary>
     public bool ContinuousMode { get; set; } = true;
 
+    /// <summary>
+    /// Even in continuous mode, stop sending after this much uninterrupted silence.
+    /// The translate-preview model HALLUCINATES when fed a long silence stream: it re-emits
+    /// the previous phrase over and over (seen in the field: "Oh, Estevão, como é que você?"
+    /// repeating with mic RMS at noise floor). Short pauses still stream (keeps prosody and
+    /// voice cloning); only dead air beyond this cap is cut, which starves the loop.
+    /// </summary>
+    public int MaxContinuousSilenceMs { get; set; } = 2000;
+
     /// <summary>RMS threshold below which audio is treated as silence (only used when ContinuousMode is false).</summary>
     public float Gate { get; set; } = 0.006f;
+
+    /// <summary>
+    /// Automatic gain for quiet inputs. The mics seen in the field peak at RMS ≈ 0.03 (-30 dBFS),
+    /// which audibly hurts the model: weak voice cloning ("não soa natural") and shaky VAD.
+    /// Tracks the envelope of VOICED chunks only (raw RMS ≥ Gate, so the noise floor is never
+    /// amplified into the gate) and normalizes speech toward <see cref="AgcTargetRms"/>.
+    /// </summary>
+    public bool AutoGain { get; set; }
+    public float AgcTargetRms { get; set; } = 0.07f;
+    public float AgcMaxGain { get; set; } = 6f;
+    private float _agcEnvelope;   // slow-decay envelope of voiced raw RMS
+    private float _agcGain = 1f;  // smoothed applied gain
 
     public AudioCaptureSource(MMDevice device, bool loopback)
     {
@@ -97,6 +118,7 @@ public sealed class AudioCaptureSource : IDisposable
         var acc = new byte[ChunkBytes * 4];
         int accLen = 0;
         int hangover = 0;
+        int silentMs = 0;
 
         long sent = 0, silenced = 0, firstLogged = 0;
         float peak = 0;
@@ -128,15 +150,41 @@ public sealed class AudioCaptureSource : IDisposable
             while (accLen - offset >= ChunkBytes)
             {
                 float rms = Rms(acc, offset, ChunkBytes);
+                bool voiced = rms >= Gate;
+
+                if (AutoGain)
+                {
+                    if (voiced)
+                        _agcEnvelope = Math.Max(rms, _agcEnvelope * 0.995f);
+                    if (_agcEnvelope > 0.001f)
+                    {
+                        float want = Math.Clamp(AgcTargetRms / _agcEnvelope, 1f, AgcMaxGain);
+                        // Smooth ~10%/chunk so the gain never pumps audibly.
+                        _agcGain += (want - _agcGain) * 0.1f;
+                    }
+                    if (_agcGain > 1.01f)
+                    {
+                        // Never clip: cap the gain so this chunk's peak stays under 0.9 FS —
+                        // clipped input distorts the cloned voice far worse than a quiet one.
+                        float peakAbs = PeakAbs(acc, offset, ChunkBytes);
+                        float g = peakAbs > 0.0001f ? Math.Min(_agcGain, 0.9f / peakAbs) : _agcGain;
+                        if (g > 1.01f)
+                        {
+                            ApplyGain(acc, offset, ChunkBytes, g);
+                            rms = Math.Min(1f, rms * g);
+                        }
+                    }
+                }
+
                 LevelChanged?.Invoke(rms);
                 if (rms > peak) peak = rms;
+                if (voiced) { hangover = 10; silentMs = 0; } // ~1 s tail so word endings aren't clipped
+                else { if (hangover > 0) hangover--; silentMs += 100; }
 
-                bool voiced = rms >= Gate;
-                if (voiced) hangover = 10; // ~1 s tail so word endings aren't clipped
-                else if (hangover > 0) hangover--;
-
-                // Continuous: send everything (best prosody). Otherwise apply the silence gate.
-                bool shouldSend = !Muted && (ContinuousMode || voiced || hangover > 0);
+                // Continuous: stream through short pauses (best prosody) but cut dead air past
+                // MaxContinuousSilenceMs (anti-hallucination). Otherwise apply the silence gate.
+                bool shouldSend = !Muted &&
+                    (voiced || hangover > 0 || (ContinuousMode && silentMs <= MaxContinuousSilenceMs));
                 if (shouldSend)
                 {
                     var chunk = new byte[ChunkBytes];
@@ -159,6 +207,36 @@ public sealed class AudioCaptureSource : IDisposable
             if (remaining > 0)
                 Buffer.BlockCopy(acc, offset, acc, 0, remaining);
             accLen = remaining;
+        }
+    }
+
+    private static float PeakAbs(byte[] data, int offset, int count)
+    {
+        int samples = count / 2;
+        int peak = 0;
+        for (int i = 0; i < samples; i++)
+        {
+            int idx = offset + i * 2;
+            int v = (short)(data[idx] | (data[idx + 1] << 8));
+            if (v < 0) v = -v;
+            if (v > peak) peak = v;
+        }
+        return peak / 32768f;
+    }
+
+    /// <summary>Scales 16-bit samples in place with hard clipping at full scale.</summary>
+    private static void ApplyGain(byte[] data, int offset, int count, float gain)
+    {
+        int samples = count / 2;
+        for (int i = 0; i < samples; i++)
+        {
+            int idx = offset + i * 2;
+            short s = (short)(data[idx] | (data[idx + 1] << 8));
+            int v = (int)(s * gain);
+            if (v > short.MaxValue) v = short.MaxValue;
+            else if (v < short.MinValue) v = short.MinValue;
+            data[idx] = (byte)v;
+            data[idx + 1] = (byte)(v >> 8);
         }
     }
 

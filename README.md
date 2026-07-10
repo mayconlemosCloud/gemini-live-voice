@@ -28,6 +28,22 @@ SAÍDA    (eles te entenderem)
 Formato de áudio (cuidado pelo app automaticamente): entrada PCM 16‑bit **16 kHz**
 mono, saída PCM 16‑bit **24 kHz** mono, enviada em blocos de ~100 ms.
 
+Proteções e otimizações embutidas:
+
+- **Corte de silêncio contínuo (anti‑loop):** o modelo preview alucina repetições
+  quando recebe silêncio por muito tempo; o app corta o envio após ~2 s de silêncio
+  e retoma na hora em que há voz (pausas curtas continuam fluindo, preservando a
+  prosódia e a clonagem de voz).
+- **Anti‑eco:** enquanto você fala (F8) *e* enquanto a sua tradução ainda está
+  tocando na reunião, a captura da reunião fica pausada (+1,5 s de cauda); e a
+  tradução recebida é abaixada para ~15% enquanto o seu mic está aberto, para não
+  vazar no microfone e ser re‑traduzida.
+- **Sessão contínua:** `sessionResumption` (reconexões preservam contexto **e a voz
+  clonada**), `contextWindowCompression` (sessões de áudio não morrem nos 15 min) e
+  tratamento de `goAway` (renova a conexão antes do corte do servidor).
+- **Latência:** VAD do servidor ajustado (`silenceDurationMs=500`, sensibilidades
+  altas), buffer de reprodução WASAPI de 60 ms e backlog da entrada limitado a 1,5 s.
+
 ---
 
 ## Pré‑requisitos

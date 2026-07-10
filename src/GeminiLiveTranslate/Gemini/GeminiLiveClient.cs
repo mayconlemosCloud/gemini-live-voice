@@ -38,6 +38,17 @@ public sealed class GeminiLiveClient : IDisposable
     private volatile bool _closing;
     private long _reconnects;
 
+    // Session resumption: the server periodically sends sessionResumptionUpdate with a handle.
+    // Passing it on reconnect restores the model's context — including the cloned voice — so a
+    // GoAway/close doesn't reset the translation voice mid-meeting.
+    private volatile string? _resumeHandle;
+    // Setup safety net: if the server closes the socket before setupComplete twice in a row,
+    // assume one of the optional setup fields isn't supported by this (preview) model and fall
+    // back to the minimal setup instead of reconnect-looping forever.
+    private volatile bool _gotSetupComplete;
+    private int _setupFailures;
+    private bool _advancedSetup = true;
+
     private long _audioChunksSent;
     private long _audioBytesSent;
     private long _audioChunksDropped;
@@ -98,33 +109,54 @@ public sealed class GeminiLiveClient : IDisposable
             throw;
         }
 
-        var setup = new JsonObject
+        // Incoming (continuous): let the server segment turns by VAD (works great).
+        // Outgoing (push-to-talk): disable server VAD and bracket each utterance with
+        // activityStart/activityEnd ourselves, per the docs — otherwise stopping the
+        // audio without an explicit end leaves the turn open and the model loops/hallucinates.
+        var aad = new JsonObject { ["disabled"] = _manualActivity };
+        if (!_manualActivity && _advancedSetup)
         {
-            ["setup"] = new JsonObject
+            // Tuned for latency: close the turn ~500 ms after speech stops (default is 800 ms)
+            // and detect speech onsets aggressively — the mics seen in the field are quiet
+            // (speech RMS ≈ 0.03), so low sensitivity misses the start of sentences.
+            aad["startOfSpeechSensitivity"] = "START_SENSITIVITY_HIGH";
+            aad["endOfSpeechSensitivity"] = "END_SENSITIVITY_HIGH";
+            aad["prefixPaddingMs"] = 20;
+            aad["silenceDurationMs"] = 500;
+        }
+
+        var setupBody = new JsonObject
+        {
+            ["model"] = $"models/{_model}",
+            ["generationConfig"] = new JsonObject
             {
-                ["model"] = $"models/{_model}",
-                ["generationConfig"] = new JsonObject
+                ["responseModalities"] = new JsonArray("AUDIO"),
+                // translationConfig must live INSIDE generationConfig, not at setup top level.
+                ["translationConfig"] = new JsonObject
                 {
-                    ["responseModalities"] = new JsonArray("AUDIO"),
-                    // translationConfig must live INSIDE generationConfig, not at setup top level.
-                    ["translationConfig"] = new JsonObject
-                    {
-                        ["targetLanguageCode"] = _targetLang,
-                        ["echoTargetLanguage"] = _echoTargetLanguage
-                    }
-                },
-                ["inputAudioTranscription"] = new JsonObject(),
-                ["outputAudioTranscription"] = new JsonObject(),
-                // Incoming (continuous): let the server segment turns by VAD (works great).
-                // Outgoing (push-to-talk): disable server VAD and bracket each utterance with
-                // activityStart/activityEnd ourselves, per the docs — otherwise stopping the
-                // audio without an explicit end leaves the turn open and the model loops/hallucinates.
-                ["realtimeInputConfig"] = new JsonObject
-                {
-                    ["automaticActivityDetection"] = new JsonObject { ["disabled"] = _manualActivity }
+                    ["targetLanguageCode"] = _targetLang,
+                    ["echoTargetLanguage"] = _echoTargetLanguage
                 }
-            }
+            },
+            ["inputAudioTranscription"] = new JsonObject(),
+            ["outputAudioTranscription"] = new JsonObject(),
+            ["realtimeInputConfig"] = new JsonObject { ["automaticActivityDetection"] = aad }
         };
+
+        if (_advancedSetup)
+        {
+            // Ask for resumption handles (and use the last one) so reconnects keep the session
+            // context — this is what keeps the cloned voice consistent across GoAway cycles.
+            setupBody["sessionResumption"] = _resumeHandle is null
+                ? new JsonObject()
+                : new JsonObject { ["handle"] = _resumeHandle };
+            // Without compression, audio sessions hard-stop at 15 min; the sliding window lets
+            // a long meeting run in one continuous session.
+            setupBody["contextWindowCompression"] = new JsonObject { ["slidingWindow"] = new JsonObject() };
+        }
+
+        var setup = new JsonObject { ["setup"] = setupBody };
+        _gotSetupComplete = false;
         Log.Info(Tag, "Enviando setup: " + setup.ToJsonString());
         await SendJsonAsync(setup, ct);
     }
@@ -217,6 +249,18 @@ public sealed class GeminiLiveClient : IDisposable
 
             // Reconnect with a short backoff so a long meeting keeps translating.
             IsReady = false;
+            if (!_gotSetupComplete && ++_setupFailures >= 2 && _advancedSetup)
+            {
+                // Two closes in a row without a completed handshake: one of the optional setup
+                // fields is likely rejected by this model — retry with the minimal setup.
+                _advancedSetup = false;
+                _resumeHandle = null;
+                Log.Warn(Tag, "Setup rejeitado repetidamente — voltando ao setup mínimo (sem resumption/compressão/VAD extra).");
+            }
+            else if (_gotSetupComplete)
+            {
+                _setupFailures = 0;
+            }
             long attempt = Interlocked.Increment(ref _reconnects);
             Log.Warn(Tag, $"Sessão caiu ({(closedByServer ? "fechada pelo servidor" : "erro de socket")}) — reconectando (tentativa #{attempt})…");
             StatusChanged?.Invoke("reconectando…");
@@ -317,8 +361,35 @@ public sealed class GeminiLiveClient : IDisposable
         if (root["setupComplete"] is not null)
         {
             IsReady = true;
+            _gotSetupComplete = true;
+            _setupFailures = 0;
             Log.Info(Tag, "setupComplete recebido — sessão PRONTA.");
             StatusChanged?.Invoke("pronto");
+            return;
+        }
+
+        // Periodic resumption token: keep the latest so a reconnect restores this session's
+        // context (and therefore the cloned voice) instead of starting from scratch.
+        if (root["sessionResumptionUpdate"] is JsonNode sru)
+        {
+            bool resumable = sru["resumable"]?.GetValue<bool>() ?? false;
+            var handle = sru["newHandle"]?.GetValue<string>();
+            if (resumable && !string.IsNullOrEmpty(handle))
+            {
+                _resumeHandle = handle;
+                Log.Debug(Tag, "sessionResumptionUpdate: handle atualizado.");
+            }
+            return;
+        }
+
+        // Server is about to drop the connection: recycle it NOW (with the resumption handle)
+        // instead of waiting for the hard close — minimizes the audio gap mid-meeting.
+        if (root["goAway"] is JsonNode ga)
+        {
+            Log.Warn(Tag, $"goAway recebido (timeLeft={ga["timeLeft"]?.ToJsonString()}) — reciclando a conexão…");
+            StatusChanged?.Invoke("sessão expirando — renovando…");
+            try { _ = _ws?.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "goAway", CancellationToken.None); }
+            catch { }
             return;
         }
 
