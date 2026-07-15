@@ -2,7 +2,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace GeminiTranslateLite;
+namespace GeminiTranslateSdk;
 
 /// <summary>
 /// Plays the TRANSLATION (24 kHz mono PCM16 from Gemini) at full volume with the ORIGINAL

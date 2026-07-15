@@ -2,33 +2,24 @@ using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace GeminiTranslateLite;
+namespace GeminiTranslateSdk;
 
 /// <summary>
 /// Captures a mic (or a render endpoint via loopback) and emits mono PCM16 at the device's
 /// NATIVE sample rate in ~100 ms chunks. No resampling: Google's own reference bridge sends
 /// 48 kHz straight to the translate model, and full-bandwidth input gives it noticeably more
-/// natural segmentation/prosody than 16 kHz (which mutes everything above 8 kHz). The audio
-/// is passed through untouched. Turn segmentation itself is the SERVER's job now
-/// (setup.realtimeInputConfig.automaticActivityDetection.silenceDurationMs in LiveClient), not
-/// ours — an earlier local silence-based send gate tried to own that decision client-side and
-/// bounced between two failure modes on the same knob: long thresholds (3 s) streamed enough
-/// continuous silence per pause to make the model hallucinate a repeat of the last phrase
-/// (logs 2026-07-06, 2026-07-15 — "testando som" echoed back verbatim); short thresholds
-/// (300 ms) chopped ordinary sub-second breathing pauses into separate turns, so the model
-/// re-rendered each fragment on its own and the received audio came out staccato/robotic
-/// (confirmed 2026-07-15 by inspecting "*-recebido-*.wav": 58 speech segments in ~90 s, gapped
-/// every ~1-1.5 s at 100-800 ms). Per the Live API docs, the real fix for the hallucination was
-/// never withholding audio sooner — it was never sending realtimeInput.audioStreamEnd to close
-/// a paused turn cleanly (now done in Direction). With that in place, this stop only needs to
-/// outlast the server's own silenceDurationMs so the server always closes the turn on its own
-/// first; it is not what decides pacing anymore.
+/// natural segmentation/prosody than 16 kHz (which mutes everything above 8 kHz). The audio is
+/// passed through untouched, and every chunk is forwarded — no local silence gate. Per the Live
+/// API docs and reference clients, that's by design: "send audio chunks as they become
+/// available without waiting for silence" and "the server handles VAD automatically — you don't
+/// need local client-side detection"; the only client-side signal expected is audioStreamEnd,
+/// and only when the stream itself actually pauses (mic muted), not a guess based on measured
+/// silence duration (see Direction's Muted setter). An earlier version of this class tried to
+/// own turn/pause detection locally via RMS + a timeout and it fought the server's own
+/// automaticActivityDetection.silenceDurationMs — right idea, wrong layer.
 /// </summary>
 public sealed class AudioIn : IDisposable
 {
-    private const float VoiceRms = 0.005f;
-    private const int SilenceStopMs = 2500;
-
     private readonly int _chunkBytes; // 100 ms @ native rate, mono PCM16
 
     private readonly string _tag;
@@ -41,14 +32,8 @@ public sealed class AudioIn : IDisposable
     /// <summary>Sample rate of the emitted chunks (the device's native rate).</summary>
     public int SampleRate { get; }
 
-    /// <summary>
-    /// Native-rate mono PCM16 chunk, exactly as captured — fired for EVERY chunk while not muted.
-    /// The bool says whether the chunk should be SENT to the model (false after 3 s without
-    /// voice — the anti-hallucination stop). The original-voice passthrough must always flow,
-    /// so gating is the consumer's choice, applied to the send only: coupling the passthrough
-    /// to the gate made the original voice drop in and out on soft speech.
-    /// </summary>
-    public event Action<byte[], bool>? ChunkAvailable;
+    /// <summary>Native-rate mono PCM16 chunk, exactly as captured — fired for EVERY chunk while not muted.</summary>
+    public event Action<byte[]>? ChunkAvailable;
     /// <summary>RMS 0..1, ~10×/s, for a VU meter.</summary>
     public event Action<float>? Level;
 
@@ -99,7 +84,6 @@ public sealed class AudioIn : IDisposable
         var temp = new byte[_chunkBytes];
         var acc = new byte[_chunkBytes * 4];
         int accLen = 0;
-        int silentMs = SilenceStopMs; // start silent: nothing is sent until there is voice
 
         while (!ct.IsCancellationRequested)
         {
@@ -117,15 +101,13 @@ public sealed class AudioIn : IDisposable
             int offset = 0;
             while (accLen - offset >= _chunkBytes)
             {
-                float rms = Rms(acc, offset, _chunkBytes);
-                Level?.Invoke(rms);
-                silentMs = rms >= VoiceRms ? 0 : silentMs + 100;
+                Level?.Invoke(Rms(acc, offset, _chunkBytes)); // VU meter only — doesn't gate sending
 
                 if (!Muted)
                 {
                     var chunk = new byte[_chunkBytes];
                     Buffer.BlockCopy(acc, offset, chunk, 0, _chunkBytes);
-                    ChunkAvailable?.Invoke(chunk, silentMs <= SilenceStopMs);
+                    ChunkAvailable?.Invoke(chunk);
                 }
                 offset += _chunkBytes;
             }

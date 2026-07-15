@@ -2,7 +2,7 @@ using System.IO;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
-namespace GeminiTranslateLite;
+namespace GeminiTranslateSdk;
 
 /// <summary>
 /// One translation flow: capture → Gemini → playback, with the original voice mixed low
@@ -31,7 +31,21 @@ public sealed class Direction : IDisposable
     public event Action<float>? Level;
     public event Action<string>? Status;
 
-    public bool Muted { get => _in.Muted; set => _in.Muted = value; }
+    /// <summary>
+    /// Muting is the only client-side "stream paused" signal the Live API docs call for: send
+    /// audioStreamEnd right when the mic actually goes quiet by user action, not on a guessed
+    /// silence timeout (see AudioIn — every captured chunk is forwarded unconditionally now).
+    /// </summary>
+    public bool Muted
+    {
+        get => _in.Muted;
+        set
+        {
+            if (value && !_in.Muted) _ = _client.SendAudioStreamEndAsync(_cts.Token);
+            _in.Muted = value;
+        }
+    }
+
     public float OriginalVolume { set => _out.OriginalVolume = value; }
 
     public Direction(string name, MMDevice inputDevice, bool loopback, MMDevice outputDevice,
@@ -52,20 +66,11 @@ public sealed class Direction : IDisposable
         }
         catch (Exception ex) { Log.Write(name, "sem gravação de diagnóstico: " + ex.Message); }
 
-        bool wasSending = false; // AudioIn starts silent — nothing sent yet, so nothing to "end"
-        _in.ChunkAvailable += (chunk, sendToModel) =>
+        _in.ChunkAvailable += chunk =>
         {
             _out.EnqueueOriginal(chunk); // the original voice always flows
-            if (!sendToModel)
-            {
-                // Edge-triggered: tell the server the stream paused exactly once per pause,
-                // not on every silent chunk, so it can close the turn cleanly.
-                if (wasSending) { wasSending = false; _ = _client.SendAudioStreamEndAsync(_cts.Token); }
-                return;
-            }
-            wasSending = true;
             lock (_wavLock) { try { _sentWav?.Write(chunk, 0, chunk.Length); } catch { } }
-            _ = _client.SendAudioAsync(chunk, _cts.Token);
+            _ = _client.SendAudioAsync(chunk, _cts.Token); // always forwarded — server owns VAD
         };
         _in.Level += l => Level?.Invoke(l);
         _client.AudioReceived += pcm =>

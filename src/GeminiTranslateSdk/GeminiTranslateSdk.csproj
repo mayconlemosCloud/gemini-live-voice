@@ -6,11 +6,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <AssemblyName>GeminiTranslateLite</AssemblyName>
-    <RootNamespace>GeminiTranslateLite</RootNamespace>
+    <AssemblyName>GeminiTranslateSdk</AssemblyName>
+    <RootNamespace>GeminiTranslateSdk</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Google.GenAI" Version="1.13.0" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 

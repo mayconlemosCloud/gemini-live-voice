@@ -6,7 +6,8 @@ using System.Text.Json.Nodes;
 namespace GeminiTranslateLite;
 
 /// <summary>
-/// Minimal Gemini Live translate session: send 16 kHz PCM16 audio, receive 24 kHz PCM16
+/// Minimal Gemini Live translate session: send mono PCM16 audio at the capture's native rate
+/// (declared in the mimeType — Google's reference bridge sends 48 kHz), receive 24 kHz PCM16
 /// translation. No tuning, no extras — the model handles VAD, segmentation and voice.
 /// Reconnects transparently when the server closes the session (Live sessions are time-limited).
 /// </summary>
@@ -19,6 +20,7 @@ public sealed class LiveClient : IDisposable
     private readonly string _model;
     private readonly string _targetLang;
     private readonly string _tag;
+    private readonly int _inputRate;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     private ClientWebSocket? _ws;
@@ -31,11 +33,12 @@ public sealed class LiveClient : IDisposable
     public event Action<string>? OutputText;
     public event Action<string>? Status;
 
-    public LiveClient(string apiKey, string model, string targetLang, string tag)
+    public LiveClient(string apiKey, string model, string targetLang, int inputRate, string tag)
     {
         _apiKey = apiKey;
         _model = model;
         _targetLang = targetLang;
+        _inputRate = inputRate;
         _tag = tag;
     }
 
@@ -68,14 +71,26 @@ public sealed class LiveClient : IDisposable
                     }
                 },
                 ["inputAudioTranscription"] = new JsonObject(),
-                ["outputAudioTranscription"] = new JsonObject()
+                ["outputAudioTranscription"] = new JsonObject(),
+                // Let the server's own VAD decide turn boundaries instead of guessing client-side:
+                // silenceDurationMs is how long IT waits through silence before ending a speech
+                // turn — set generously so a speaker with long natural pauses doesn't get every
+                // sentence split into its own turn (see AudioIn's SilenceStopMs, which must stay
+                // above this so the server always closes the turn on its own before we ever do).
+                ["realtimeInputConfig"] = new JsonObject
+                {
+                    ["automaticActivityDetection"] = new JsonObject
+                    {
+                        ["silenceDurationMs"] = 1500
+                    }
+                }
             }
         };
         Log.Write(_tag, "setup: " + setup.ToJsonString());
         await SendAsync(setup.ToJsonString(), ct);
     }
 
-    public async Task SendAudioAsync(byte[] pcm16k, CancellationToken ct)
+    public async Task SendAudioAsync(byte[] pcm, CancellationToken ct)
     {
         if (!_ready || _ws is not { State: WebSocketState.Open }) return;
         var msg = new JsonObject
@@ -84,14 +99,31 @@ public sealed class LiveClient : IDisposable
             {
                 ["audio"] = new JsonObject
                 {
-                    ["data"] = Convert.ToBase64String(pcm16k),
-                    ["mimeType"] = "audio/pcm;rate=16000"
+                    ["data"] = Convert.ToBase64String(pcm),
+                    ["mimeType"] = $"audio/pcm;rate={_inputRate}"
                 }
             }
         };
         try { await SendAsync(msg.ToJsonString(), ct); }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Log.Write(_tag, "erro ao enviar áudio: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// Tells the server the input paused (mic muted / speaker went quiet) so it flushes/closes
+    /// the current turn cleanly instead of being left mid-stream with no explanation — per the
+    /// Live API docs, this is the correct signal for a stream pause under automatic VAD, and
+    /// omitting it is the likely reason a stale turn could resurface (repeated phrase) once
+    /// audio resumed. Reopening afterwards needs no counterpart message: sending audio again
+    /// is enough.
+    /// </summary>
+    public async Task SendAudioStreamEndAsync(CancellationToken ct)
+    {
+        if (!_ready || _ws is not { State: WebSocketState.Open }) return;
+        var msg = new JsonObject { ["realtimeInput"] = new JsonObject { ["audioStreamEnd"] = true } };
+        try { await SendAsync(msg.ToJsonString(), ct); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log.Write(_tag, "erro ao enviar audioStreamEnd: " + ex.Message); }
     }
 
     private async Task SendAsync(string json, CancellationToken ct)
