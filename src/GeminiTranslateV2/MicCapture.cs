@@ -2,47 +2,32 @@ using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace GeminiTranslateSdk;
+namespace GeminiTranslateV2;
 
 /// <summary>
-/// Captures a mic (or a render endpoint via loopback) and emits mono PCM16 at the device's
-/// NATIVE sample rate in ~100 ms chunks. No resampling: Google's own reference bridge sends
-/// 48 kHz straight to the translate model, and full-bandwidth input gives it noticeably more
-/// natural segmentation/prosody than 16 kHz (which mutes everything above 8 kHz). The audio is
-/// passed through untouched, and every chunk is forwarded — no local silence gate. Per the Live
-/// API docs and reference clients, that's by design: "send audio chunks as they become
-/// available without waiting for silence" and "the server handles VAD automatically — you don't
-/// need local client-side detection"; the only client-side signal expected is audioStreamEnd,
-/// and only when the stream itself actually pauses (mic muted), not a guess based on measured
-/// silence duration (see Direction's Muted setter). An earlier version of this class tried to
-/// own turn/pause detection locally via RMS + a timeout and it fought the server's own
-/// automaticActivityDetection.silenceDurationMs — right idea, wrong layer.
+/// Real microphone capture at its native rate, mono PCM16, ~100 ms chunks. No local silence
+/// gate — every chunk is forwarded; the server's automaticActivityDetection decides turns
+/// (see LiveClient). Turn the mic's own noise suppression / echo cancellation on in Windows
+/// Settings (System → Sound → your microphone → "Enhance audio") — that's what actually cleans
+/// the signal, not anything this class does.
 /// </summary>
-public sealed class AudioIn : IDisposable
+public sealed class MicCapture : IAudioSource
 {
-    private readonly int _chunkBytes; // 100 ms @ native rate, mono PCM16
-
-    private readonly string _tag;
-    private readonly IWaveIn _capture;
+    private readonly int _chunkBytes;
+    private readonly WasapiCapture _capture;
     private readonly BufferedWaveProvider _buffer;
     private readonly IWaveProvider _outMono;
     private CancellationTokenSource? _cts;
     private bool _disposed;
 
-    /// <summary>Sample rate of the emitted chunks (the device's native rate).</summary>
     public int SampleRate { get; }
-
-    /// <summary>Native-rate mono PCM16 chunk, exactly as captured — fired for EVERY chunk while not muted.</summary>
     public event Action<byte[]>? ChunkAvailable;
-    /// <summary>RMS 0..1, ~10×/s, for a VU meter.</summary>
     public event Action<float>? Level;
-
     public bool Muted { get; set; }
 
-    public AudioIn(MMDevice device, bool loopback, string tag)
+    public MicCapture(MMDevice device)
     {
-        _tag = tag;
-        _capture = loopback ? new WasapiLoopbackCapture(device) : new WasapiCapture(device);
+        _capture = new WasapiCapture(device);
         _buffer = new BufferedWaveProvider(_capture.WaveFormat)
         {
             ReadFully = false,
@@ -55,31 +40,31 @@ public sealed class AudioIn : IDisposable
         };
 
         ISampleProvider sp = _buffer.ToSampleProvider();
-        if (sp.WaveFormat.Channels > 1)
-        {
-            // Mic: take channel 0 only. Averaging the channels of a mic ARRAY combines capsules
-            // with different phases (comb filtering) and thins the voice — the "app is limiting
-            // my mic" effect. Loopback (meeting) audio is a produced stereo mix, so averaging is
-            // correct there.
-            sp = loopback ? new ToMono(sp) : new FirstChannel(sp);
-        }
+        if (sp.WaveFormat.Channels > 1) sp = new FirstChannel(sp); // channel 0 only — no comb filtering across capsules
         SampleRate = sp.WaveFormat.SampleRate;
-        _chunkBytes = SampleRate / 10 * 2; // 100 ms of mono PCM16
+        _chunkBytes = SampleRate / 10 * 2; // 100 ms mono PCM16
         _outMono = new SampleToWaveProvider16(sp);
 
-        Log.Write(_tag, $"captura em '{device.FriendlyName}' (loopback={loopback}, " +
-                        $"{_capture.WaveFormat.SampleRate} Hz {_capture.WaveFormat.Channels} ch), " +
-                        $"enviando {SampleRate} Hz mono sem resample.");
+        Log.Write("Mic", $"captura em '{device.FriendlyName}' ({_capture.WaveFormat.SampleRate} Hz " +
+                         $"{_capture.WaveFormat.Channels} ch), enviando {SampleRate} Hz mono sem resample.");
     }
 
-    public void Start()
+    public Task StartAsync()
     {
         _capture.StartRecording();
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => PumpAsync(_cts.Token));
+        return Task.CompletedTask;
     }
 
     private async Task PumpAsync(CancellationToken ct)
+    {
+        try { await PumpCoreAsync(ct); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Log.Write("Mic", $"loop de captura morreu: {ex}"); }
+    }
+
+    private async Task PumpCoreAsync(CancellationToken ct)
     {
         var temp = new byte[_chunkBytes];
         var acc = new byte[_chunkBytes * 4];
@@ -101,8 +86,7 @@ public sealed class AudioIn : IDisposable
             int offset = 0;
             while (accLen - offset >= _chunkBytes)
             {
-                Level?.Invoke(Rms(acc, offset, _chunkBytes)); // VU meter only — doesn't gate sending
-
+                Level?.Invoke(Rms(acc, offset, _chunkBytes));
                 if (!Muted)
                 {
                     var chunk = new byte[_chunkBytes];
@@ -166,38 +150,6 @@ internal sealed class FirstChannel : ISampleProvider
         int frames = got / _channels;
         for (int f = 0; f < frames; f++)
             buffer[offset + f] = _buf[f * _channels];
-        return frames;
-    }
-}
-
-/// <summary>Averages any number of channels down to mono.</summary>
-internal sealed class ToMono : ISampleProvider
-{
-    private readonly ISampleProvider _src;
-    private readonly int _channels;
-    private float[] _buf = Array.Empty<float>();
-
-    public ToMono(ISampleProvider src)
-    {
-        _src = src;
-        _channels = src.WaveFormat.Channels;
-        WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(src.WaveFormat.SampleRate, 1);
-    }
-
-    public WaveFormat WaveFormat { get; }
-
-    public int Read(float[] buffer, int offset, int count)
-    {
-        int needed = count * _channels;
-        if (_buf.Length < needed) _buf = new float[needed];
-        int got = _src.Read(_buf, 0, needed);
-        int frames = got / _channels;
-        for (int f = 0; f < frames; f++)
-        {
-            float sum = 0;
-            for (int c = 0; c < _channels; c++) sum += _buf[f * _channels + c];
-            buffer[offset + f] = sum / _channels;
-        }
         return frames;
     }
 }

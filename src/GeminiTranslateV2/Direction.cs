@@ -2,24 +2,21 @@ using System.IO;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
-namespace GeminiTranslateSdk;
+namespace GeminiTranslateV2;
 
 /// <summary>
 /// One translation flow: capture → Gemini → playback, with the original voice mixed low
-/// under the translation. Used twice: incoming (meeting → my headphones) and outgoing
-/// (my mic → virtual mic the meeting listens to).
+/// under the translation. "Entrada" uses ProcessCapture (listen to one call app, clean).
+/// "Saída" uses MicCapture (your real mic, with Windows' own noise suppression enabled).
 /// </summary>
 public sealed class Direction : IDisposable
 {
-    private readonly AudioIn _in;
+    private readonly IAudioSource _in;
     private readonly AudioOut _out;
     private readonly LiveClient _client;
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
 
-    // Diagnostic taps (no processing): exactly what the model HEARD and exactly what it
-    // RETURNED, straight off the wire — lets us tell "the model produced an unnatural voice"
-    // apart from "the routing/meeting app degraded it". Files land next to the session log.
     private readonly WaveFileWriter? _sentWav;
     private readonly WaveFileWriter? _recvWav;
     private readonly object _wavLock = new();
@@ -31,11 +28,7 @@ public sealed class Direction : IDisposable
     public event Action<float>? Level;
     public event Action<string>? Status;
 
-    /// <summary>
-    /// Muting is the only client-side "stream paused" signal the Live API docs call for: send
-    /// audioStreamEnd right when the mic actually goes quiet by user action, not on a guessed
-    /// silence timeout (see AudioIn — every captured chunk is forwarded unconditionally now).
-    /// </summary>
+    /// <summary>Muting is the only local "stream paused" signal we send — never a guessed silence timeout.</summary>
     public bool Muted
     {
         get => _in.Muted;
@@ -48,11 +41,23 @@ public sealed class Direction : IDisposable
 
     public float OriginalVolume { set => _out.OriginalVolume = value; }
 
-    public Direction(string name, MMDevice inputDevice, bool loopback, MMDevice outputDevice,
+    /// <summary>Format of this direction's rendered mix, for ConversationRecorder.</summary>
+    public WaveFormat OutputMixFormat => _out.MixFormat;
+
+    /// <summary>Translated audio queued for playback — the live delay the listener hears.</summary>
+    public TimeSpan TranslationQueue => _out.TranslationQueue;
+
+    /// <summary>True while the queue got long and the translation is playing at 1.1×.</summary>
+    public bool CatchingUp => _out.CatchingUp;
+
+    /// <summary>Tap on this direction's rendered mix (exactly what its listener hears).</summary>
+    public Action<float[], int, int>? OutputTap { set => _out.RenderTap = value; }
+
+    public Direction(string name, IAudioSource inputSource, MMDevice outputDevice,
         string apiKey, string model, string targetLang, float originalVolume)
     {
         Name = name;
-        _in = new AudioIn(inputDevice, loopback, name);
+        _in = inputSource;
         _out = new AudioOut(outputDevice, _in.SampleRate, originalVolume, name);
         _client = new LiveClient(apiKey, model, targetLang, _in.SampleRate, name);
 
@@ -87,7 +92,7 @@ public sealed class Direction : IDisposable
     {
         _out.Start();
         await _client.ConnectAsync(_cts.Token);
-        _in.Start();
+        await _in.StartAsync();
         Log.Write(Name, "direção iniciada.");
     }
 

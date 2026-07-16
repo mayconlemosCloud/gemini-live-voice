@@ -1,6 +1,6 @@
 using System.Windows;
 
-namespace GeminiTranslateSdk;
+namespace GeminiTranslateV2;
 
 public partial class App : Application
 {

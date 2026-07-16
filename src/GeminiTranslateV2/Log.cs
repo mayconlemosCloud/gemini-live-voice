@@ -1,8 +1,8 @@
 using System.IO;
 
-namespace GeminiTranslateSdk;
+namespace GeminiTranslateV2;
 
-/// <summary>Tiny session file logger: %AppData%\GeminiTranslateSdk\logs\session-*.log.</summary>
+/// <summary>Tiny session file logger: %AppData%\GeminiTranslateV2\logs\session-*.log.</summary>
 public static class Log
 {
     private static readonly object Lock = new();
@@ -10,7 +10,7 @@ public static class Log
 
     public static string Folder { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "GeminiTranslateSdk", "logs");
+        "GeminiTranslateV2", "logs");
 
     public static void Write(string tag, string message)
     {
