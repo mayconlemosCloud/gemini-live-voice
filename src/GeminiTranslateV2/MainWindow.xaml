@@ -30,7 +30,7 @@
             <PasswordBox x:Name="ApiKeyBox" VerticalContentAlignment="Center"/>
         </DockPanel>
 
-        <!-- Entrada: process to listen to (Process Loopback, not a device) -->
+        <!-- Entrada: a process (Process Loopback) OR a render device/cable (WASAPI loopback) -->
         <Grid Grid.Row="1" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="150"/>
@@ -39,9 +39,10 @@
                 <ColumnDefinition Width="150"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="Escutar processo:" Grid.Column="0"/>
-            <ComboBox x:Name="ProcessCombo" Grid.Column="1" Margin="0,2,6,2"/>
-            <Button x:Name="RefreshProcessesButton" Content="↻" Width="28" Grid.Column="2" Click="OnRefreshProcesses" Margin="0,0,10,0"/>
+            <TextBlock Text="Escutar:" Grid.Column="0"
+                       ToolTip="Um processo (captura só o áudio daquele app) ou um dispositivo/cabo (captura tudo que toca nele — aponte a saída do app de chamada para o cabo)."/>
+            <ComboBox x:Name="SourceCombo" Grid.Column="1" Margin="0,2,6,2"/>
+            <Button x:Name="RefreshSourcesButton" Content="↻" Width="28" Grid.Column="2" Click="OnRefreshSources" Margin="0,0,10,0"/>
             <TextBlock Text="Meu fone (ouço aqui):" Grid.Column="3"/>
             <ComboBox x:Name="HeadphonesCombo" Grid.Column="4"/>
         </Grid>

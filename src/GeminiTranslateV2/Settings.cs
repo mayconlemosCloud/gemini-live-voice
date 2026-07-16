@@ -37,6 +37,9 @@ public sealed class Settings
 
     /// <summary>Process name (e.g. "Teams", "chrome", "WhatsApp") whose audio we listen to — Process Loopback, not a device.</summary>
     public string? EntradaProcessName { get; set; }
+
+    /// <summary>Render endpoint captured via WASAPI loopback (the Lite/cable approach). When set, wins over EntradaProcessName.</summary>
+    public string? EntradaDeviceId { get; set; }
     public string? HeadphonesDeviceId { get; set; }  // where I hear the incoming translation
     public string? MicDeviceId { get; set; }         // my real microphone
     public string? VirtualMicDeviceId { get; set; }  // render side of the cable the call app uses as mic

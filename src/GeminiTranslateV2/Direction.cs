@@ -6,8 +6,8 @@ namespace GeminiTranslateV2;
 
 /// <summary>
 /// One translation flow: capture → Gemini → playback, with the original voice mixed low
-/// under the translation. "Entrada" uses ProcessCapture (listen to one call app, clean).
-/// "Saída" uses MicCapture (your real mic, with Windows' own noise suppression enabled).
+/// under the translation. "Entrada" uses ProcessCapture or LoopbackCapture (the call app's
+/// audio). "Saída" uses MicCapture (your real mic, with Windows' own noise suppression enabled).
 /// </summary>
 public sealed class Direction : IDisposable
 {

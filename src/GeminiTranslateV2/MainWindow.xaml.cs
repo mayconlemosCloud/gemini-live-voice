@@ -16,6 +16,18 @@ public sealed record ProcessItem(string ProcessName, int Id, string Title)
     public override string ToString() => $"{Title} ({ProcessName})";
 }
 
+/// <summary>Entrada source: one app's audio via Process Loopback.</summary>
+public sealed record SourceProcess(ProcessItem Process)
+{
+    public override string ToString() => $"Processo: {Process}";
+}
+
+/// <summary>Entrada source: a render device/cable via WASAPI loopback (the Lite approach).</summary>
+public sealed record SourceDevice(DeviceItem Device)
+{
+    public override string ToString() => $"Dispositivo: {Device.Name}";
+}
+
 public partial class MainWindow : Window
 {
     private readonly Settings _settings = Settings.Load();
@@ -29,7 +41,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         LoadDevices();
-        LoadProcesses();
+        LoadSources();
         ApplySettings();
 
         var delayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -66,22 +78,33 @@ public partial class MainWindow : Window
         MicCombo.ItemsSource = capture;
     }
 
-    private void LoadProcesses()
+    private void LoadSources()
     {
-        var items = Process.GetProcesses()
+        var processes = Process.GetProcesses()
             .Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrWhiteSpace(p.MainWindowTitle))
             .Select(p => new ProcessItem(p.ProcessName, p.Id, p.MainWindowTitle))
             .OrderBy(p => p.ProcessName)
             .ToList();
-        ProcessCombo.ItemsSource = items;
-        if (!string.IsNullOrEmpty(_settings.EntradaProcessName))
-        {
-            var match = items.FirstOrDefault(p => p.ProcessName.Equals(_settings.EntradaProcessName, StringComparison.OrdinalIgnoreCase));
-            if (match is not null) ProcessCombo.SelectedItem = match;
-        }
+
+        using var enumerator = new MMDeviceEnumerator();
+        var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active)
+            .Select(d => new DeviceItem(d.ID, d.FriendlyName)).ToList();
+
+        var items = new List<object>();
+        items.AddRange(processes.Select(p => new SourceProcess(p)));
+        items.AddRange(devices.Select(d => new SourceDevice(d)));
+        SourceCombo.ItemsSource = items;
+
+        // A saved device wins over a saved process name (see Settings.EntradaDeviceId).
+        if (!string.IsNullOrEmpty(_settings.EntradaDeviceId))
+            SourceCombo.SelectedItem = items.OfType<SourceDevice>()
+                .FirstOrDefault(s => s.Device.Id == _settings.EntradaDeviceId);
+        if (SourceCombo.SelectedItem is null && !string.IsNullOrEmpty(_settings.EntradaProcessName))
+            SourceCombo.SelectedItem = items.OfType<SourceProcess>()
+                .FirstOrDefault(s => s.Process.ProcessName.Equals(_settings.EntradaProcessName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private void OnRefreshProcesses(object sender, RoutedEventArgs e) => LoadProcesses();
+    private void OnRefreshSources(object sender, RoutedEventArgs e) => LoadSources();
 
     private void ApplySettings()
     {
@@ -111,7 +134,8 @@ public partial class MainWindow : Window
         _settings.HeadphonesDeviceId = IdOf(HeadphonesCombo);
         _settings.MicDeviceId = IdOf(MicCombo);
         _settings.VirtualMicDeviceId = IdOf(VirtualMicCombo);
-        _settings.EntradaProcessName = (ProcessCombo.SelectedItem as ProcessItem)?.ProcessName;
+        _settings.EntradaProcessName = (SourceCombo.SelectedItem as SourceProcess)?.Process.ProcessName;
+        _settings.EntradaDeviceId = (SourceCombo.SelectedItem as SourceDevice)?.Device.Id;
         _settings.MyLang = ((Language?)MyLangCombo.SelectedItem)?.Code ?? "pt";
         _settings.TheirLang = ((Language?)TheirLangCombo.SelectedItem)?.Code ?? "en";
         _settings.OriginalVolume = VolumeSlider.Value;
@@ -136,19 +160,31 @@ public partial class MainWindow : Window
             using var enumerator = new MMDeviceEnumerator();
             MMDevice Dev(string id) => enumerator.GetDevice(id);
 
-            var targetProcess = (ProcessItem)ProcessCombo.SelectedItem;
-            // Re-resolve the PID by name at connect time — the process may have restarted since
-            // the combo was last refreshed.
-            var live = Process.GetProcesses().FirstOrDefault(p =>
-                p.ProcessName.Equals(targetProcess.ProcessName, StringComparison.OrdinalIgnoreCase)
-                && p.MainWindowHandle != IntPtr.Zero)
-                ?? throw new InvalidOperationException($"'{targetProcess.ProcessName}' não está mais rodando — atualize a lista.");
+            IAudioSource entradaSource;
+            string entradaLabel;
+            if (SourceCombo.SelectedItem is SourceDevice sd)
+            {
+                entradaSource = new LoopbackCapture(Dev(sd.Device.Id));
+                entradaLabel = sd.Device.Name;
+            }
+            else
+            {
+                var targetProcess = ((SourceProcess)SourceCombo.SelectedItem).Process;
+                // Re-resolve the PID by name at connect time — the process may have restarted
+                // since the combo was last refreshed.
+                var live = Process.GetProcesses().FirstOrDefault(p =>
+                    p.ProcessName.Equals(targetProcess.ProcessName, StringComparison.OrdinalIgnoreCase)
+                    && p.MainWindowHandle != IntPtr.Zero)
+                    ?? throw new InvalidOperationException($"'{targetProcess.ProcessName}' não está mais rodando — atualize a lista.");
+                entradaSource = new ProcessCapture((uint)live.Id);
+                entradaLabel = live.ProcessName;
+            }
 
             StatusText.Text = "Conectando…";
             StartButton.IsEnabled = false;
 
             _incoming = new Direction("Entrada",
-                new ProcessCapture((uint)live.Id), Dev(_settings.HeadphonesDeviceId!),
+                entradaSource, Dev(_settings.HeadphonesDeviceId!),
                 _settings.ApiKey, _settings.Model, _settings.MyLang, (float)_settings.OriginalVolume);
             Wire(_incoming, IncomingBox);
 
@@ -172,7 +208,7 @@ public partial class MainWindow : Window
             await _incoming.StartAsync();
             await _outgoing.StartAsync();
 
-            IncomingHeader.Text = $"{live.ProcessName} → você ouve em {Languages.ByCode(_settings.MyLang).Name}";
+            IncomingHeader.Text = $"{entradaLabel} → você ouve em {Languages.ByCode(_settings.MyLang).Name}";
             OutgoingHeader.Text = $"Você → eles ouvem em {Languages.ByCode(_settings.TheirLang).Name}";
             SetUi(true);
         }
@@ -193,12 +229,18 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
             throw new InvalidOperationException("informe a API key do Google AI Studio.");
-        if (ProcessCombo.SelectedItem is null)
-            throw new InvalidOperationException("escolha qual processo (Teams, Chrome, WhatsApp...) escutar.");
+        if (SourceCombo.SelectedItem is null)
+            throw new InvalidOperationException("escolha o que escutar: um processo (Teams, Chrome...) ou um dispositivo/cabo.");
         if (_settings.HeadphonesDeviceId is null || _settings.MicDeviceId is null || _settings.VirtualMicDeviceId is null)
             throw new InvalidOperationException("selecione fone, microfone e microfone virtual.");
         if (_settings.VirtualMicDeviceId == _settings.HeadphonesDeviceId)
             throw new InvalidOperationException("o microfone virtual precisa ser um dispositivo separado do fone.");
+        // Loopback on the same device you listen on would recapture the translation itself
+        // (and the original underneath) — an endless feedback loop into the model.
+        if (_settings.EntradaDeviceId is not null && _settings.EntradaDeviceId == _settings.HeadphonesDeviceId)
+            throw new InvalidOperationException("o dispositivo escutado não pode ser o mesmo fone onde você ouve a tradução — a tradução voltaria para a entrada em loop. Use um cabo virtual dedicado.");
+        if (_settings.EntradaDeviceId is not null && _settings.EntradaDeviceId == _settings.VirtualMicDeviceId)
+            throw new InvalidOperationException("o dispositivo escutado não pode ser o mesmo cabo do microfone virtual — sua própria voz traduzida voltaria como Entrada.");
     }
 
     private void Wire(Direction d, TextBox box)
@@ -234,7 +276,7 @@ public partial class MainWindow : Window
         StatusText.Text = running ? "Traduzindo ao vivo…" : "Parado";
         MuteButton.IsEnabled = running;
         MuteButton.Content = "🎙 Mic ligado";
-        foreach (var c in new Control[] { ProcessCombo, RefreshProcessesButton, HeadphonesCombo, MicCombo, VirtualMicCombo,
+        foreach (var c in new Control[] { SourceCombo, RefreshSourcesButton, HeadphonesCombo, MicCombo, VirtualMicCombo,
                  MyLangCombo, TheirLangCombo, ApiKeyBox })
             c.IsEnabled = !running;
         IncomingBox.Clear();
