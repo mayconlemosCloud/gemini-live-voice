@@ -35,6 +35,8 @@ public partial class MainWindow : Window
     private Direction? _outgoing;
     private ConversationRecorder? _recorder;
     private TranscriptLog? _transcript;
+    private AssistantClient? _assistant;
+    private QuestionTranscript? _questionTranscript;
     private bool Running => _incoming is not null;
 
     public MainWindow()
@@ -109,6 +111,8 @@ public partial class MainWindow : Window
     private void ApplySettings()
     {
         ApiKeyBox.Password = _settings.ApiKey;
+        AssistantEnabledCheck.IsChecked = _settings.AssistantEnabled;
+        AssistantContextBox.Text = _settings.AssistantContext;
         MyLangCombo.ItemsSource = Languages.All;
         TheirLangCombo.ItemsSource = Languages.All;
         MyLangCombo.SelectedItem = Languages.ByCode(_settings.MyLang);
@@ -131,6 +135,8 @@ public partial class MainWindow : Window
     private void SaveSettings()
     {
         _settings.ApiKey = ApiKeyBox.Password;
+        _settings.AssistantEnabled = AssistantEnabledCheck.IsChecked == true;
+        _settings.AssistantContext = AssistantContextBox.Text;
         _settings.HeadphonesDeviceId = IdOf(HeadphonesCombo);
         _settings.MicDeviceId = IdOf(MicCombo);
         _settings.VirtualMicDeviceId = IdOf(VirtualMicCombo);
@@ -183,10 +189,21 @@ public partial class MainWindow : Window
             StatusText.Text = "Conectando…";
             StartButton.IsEnabled = false;
 
+            // Assistente (IA fora do Google): só liga se marcado e com chave preenchida.
+            IncomingBox.Document.Blocks.Clear();
+            OutgoingBox.Clear();
+            _assistant = null;
+            bool wantAssistant = AssistantEnabledCheck.IsChecked == true;
+            bool haveKey = !string.IsNullOrWhiteSpace(_settings.ApiKey);
+            if (wantAssistant && haveKey)
+                _assistant = new AssistantClient(_settings.ApiKey, _settings.AssistantModel, _settings.AssistantContext);
+            Log.Write("Assistente", $"configuração: marcado={wantAssistant} · chave={(haveKey ? "ok" : "vazia")} · modelo={_settings.AssistantModel} · ativo={_assistant is not null}");
+            _questionTranscript = new QuestionTranscript(IncomingBox, _assistant is null ? null : OpenSuggestion);
+
             _incoming = new Direction("Entrada",
                 entradaSource, Dev(_settings.HeadphonesDeviceId!),
                 _settings.ApiKey, _settings.Model, _settings.MyLang, (float)_settings.OriginalVolume);
-            Wire(_incoming, IncomingBox);
+            WireIncoming(_incoming);
 
             _outgoing = new Direction("Saída",
                 new MicCapture(Dev(_settings.MicDeviceId!)), Dev(_settings.VirtualMicDeviceId!),
@@ -253,6 +270,55 @@ public partial class MainWindow : Window
         d.Status += s => Dispatcher.BeginInvoke(() => StatusText.Text = s);
     }
 
+    /// <summary>Entrada usa RichTextBox com detecção de perguntas (via QuestionTranscript).</summary>
+    private void WireIncoming(Direction d)
+    {
+        d.TranslatedText += t => Dispatcher.BeginInvoke(() => _questionTranscript?.Append(t));
+        d.Status += s => Dispatcher.BeginInvoke(() => StatusText.Text = s);
+    }
+
+    private readonly Dictionary<string, SuggestionWindow> _suggestionWindows = new();
+
+    /// <summary>Abre a janela de sugestão e busca a resposta na IA (só ao clicar — poupa custo).</summary>
+    private async void OpenSuggestion(string question, string context)
+    {
+        if (_assistant is null)
+        {
+            Log.Write("Sugestão", "clique ignorado: assistente desligado (_assistant == null).");
+            return;
+        }
+
+        // Já tem janela aberta para essa pergunta? Traz para frente em vez de duplicar.
+        if (_suggestionWindows.TryGetValue(question, out var existing))
+        {
+            Log.Write("Sugestão", "janela já aberta — trazendo para frente.");
+            existing.Activate();
+            return;
+        }
+
+        Log.Write("Sugestão", $"abrindo janela para: '{question}'");
+        var win = new SuggestionWindow(question) { Owner = this };
+        _suggestionWindows[question] = win;
+        win.Closed += (_, _) =>
+        {
+            _suggestionWindows.Remove(question);
+            Log.Write("Sugestão", "janela fechada.");
+        };
+        win.Show();
+        Log.Write("Sugestão", "janela exibida (Show). Chamando a IA…");
+        try
+        {
+            var answer = await _assistant.SuggestAnswerAsync(question, context, CancellationToken.None);
+            win.SetAnswer(answer);
+            Log.Write("Sugestão", "resposta preenchida na janela.");
+        }
+        catch (Exception ex)
+        {
+            win.SetError(ex.Message);
+            Log.Write("Sugestão", "falha ao sugerir resposta: " + ex);
+        }
+    }
+
     private void WireTranscript(Direction d, string who)
     {
         d.OriginalText += t => _transcript?.Append($"{who} [original]", t);
@@ -265,9 +331,11 @@ public partial class MainWindow : Window
         try { _outgoing?.Dispose(); } catch { }
         try { _recorder?.Dispose(); } catch { }
         try { _transcript?.Dispose(); } catch { }
+        try { _assistant?.Dispose(); } catch { }
         _incoming = _outgoing = null;
         _recorder = null;
         _transcript = null;
+        _assistant = null;
     }
 
     private void SetUi(bool running)
@@ -277,10 +345,8 @@ public partial class MainWindow : Window
         MuteButton.IsEnabled = running;
         MuteButton.Content = "🎙 Mic ligado";
         foreach (var c in new Control[] { SourceCombo, RefreshSourcesButton, HeadphonesCombo, MicCombo, VirtualMicCombo,
-                 MyLangCombo, TheirLangCombo, ApiKeyBox })
+                 MyLangCombo, TheirLangCombo, ApiKeyBox, AssistantEnabledCheck, AssistantContextBox })
             c.IsEnabled = !running;
-        IncomingBox.Clear();
-        OutgoingBox.Clear();
     }
 
     // ---------- live controls ----------

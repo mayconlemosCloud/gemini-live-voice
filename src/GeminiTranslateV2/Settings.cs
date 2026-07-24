@@ -49,6 +49,14 @@ public sealed class Settings
 
     public double OriginalVolume { get; set; } = 0.20;
 
+    // ---- Assistente de respostas (usa a mesma API do Google/Gemini, camada gratuita) ----
+    /// <summary>Modelo Gemini (generateContent) para sugerir respostas. Flash é gratuito e rápido.</summary>
+    public string AssistantModel { get; set; } = "gemini-2.5-flash";
+    /// <summary>Quando ligado, perguntas da outra pessoa ficam sublinhadas e clicáveis para sugerir uma resposta.</summary>
+    public bool AssistantEnabled { get; set; }
+    /// <summary>Contexto opcional sobre você (cargo, tema da reunião...) para deixar as sugestões mais relevantes.</summary>
+    public string AssistantContext { get; set; } = "";
+
     private static string FilePath
     {
         get

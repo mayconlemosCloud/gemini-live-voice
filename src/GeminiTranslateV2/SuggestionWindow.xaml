@@ -1,0 +1,30 @@
+<Window x:Class="GeminiTranslateV2.SuggestionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Sugestão de resposta" Width="460" Height="360"
+        Background="#1E1F22" Foreground="#EAEAEA" FontSize="13"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Pergunta:" FontWeight="Bold" Foreground="#9AA0A6"/>
+        <TextBlock x:Name="QuestionText" Grid.Row="1" TextWrapping="Wrap" Margin="0,2,0,10"/>
+
+        <TextBlock Grid.Row="2" Text="Sugestão de resposta:" FontWeight="Bold" Foreground="#9AA0A6"/>
+        <TextBox x:Name="AnswerBox" Grid.Row="3" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" Background="#26282C" Foreground="#EAEAEA"
+                 BorderThickness="0" Padding="8" Margin="0,2,0,0"/>
+
+        <DockPanel Grid.Row="4" Margin="0,10,0,0">
+            <Button x:Name="CopyButton" Content="Copiar" Width="90" Height="30"
+                    DockPanel.Dock="Right" Click="OnCopy"/>
+            <TextBlock x:Name="ModelText" Foreground="#9AA0A6" VerticalAlignment="Center"/>
+        </DockPanel>
+    </Grid>
+</Window>

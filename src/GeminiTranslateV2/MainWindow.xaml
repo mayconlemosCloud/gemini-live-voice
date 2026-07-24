@@ -20,6 +20,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -82,8 +84,21 @@
                     ValueChanged="OnVolumeChanged" VerticalAlignment="Center"/>
         </DockPanel>
 
+        <!-- Assistente de respostas (usa a mesma API do Google/Gemini — camada gratuita) -->
+        <DockPanel Grid.Row="5" Margin="0,0,0,8">
+            <CheckBox x:Name="AssistantEnabledCheck" Content="Sugerir respostas às perguntas (grátis, via Gemini)"
+                      VerticalAlignment="Center"
+                      ToolTip="Usa a mesma chave do Google já preenchida acima. Perguntas da outra pessoa ficam sublinhadas — clique para ver uma sugestão de resposta."/>
+        </DockPanel>
+
+        <DockPanel Grid.Row="6" Margin="0,0,0,10">
+            <TextBlock Text="Sobre você (contexto):" Width="150"
+                       ToolTip="Opcional: cargo, tema da reunião, etc. Deixa as sugestões mais relevantes."/>
+            <TextBox x:Name="AssistantContextBox" VerticalContentAlignment="Center"/>
+        </DockPanel>
+
         <!-- Transcripts -->
-        <Grid Grid.Row="5">
+        <Grid Grid.Row="7">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="10"/>
@@ -95,9 +110,9 @@
             </Grid.RowDefinitions>
 
             <TextBlock x:Name="IncomingHeader" Text="A outra pessoa" Grid.Row="0" Grid.Column="0" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBox x:Name="IncomingBox" Grid.Row="1" Grid.Column="0" IsReadOnly="True"
-                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                     Background="#26282C" Foreground="#EAEAEA" BorderThickness="0" Padding="8"/>
+            <RichTextBox x:Name="IncomingBox" Grid.Row="1" Grid.Column="0" IsReadOnly="True"
+                         VerticalScrollBarVisibility="Auto"
+                         Background="#26282C" Foreground="#EAEAEA" BorderThickness="0" Padding="8"/>
 
             <TextBlock x:Name="OutgoingHeader" Text="Você" Grid.Row="0" Grid.Column="2" FontWeight="Bold" Margin="0,0,0,4"/>
             <TextBox x:Name="OutgoingBox" Grid.Row="1" Grid.Column="2" IsReadOnly="True"
@@ -106,7 +121,7 @@
         </Grid>
 
         <!-- Controls -->
-        <DockPanel Grid.Row="6" Margin="0,10,0,0">
+        <DockPanel Grid.Row="8" Margin="0,10,0,0">
             <Button x:Name="StartButton" Content="▶  Iniciar" Width="120" Height="34"
                     Click="OnStartStop" FontWeight="Bold"/>
             <Button x:Name="MuteButton" Content="🎙 Mic ligado" Width="120" Height="34" Margin="8,0,0,0"
