@@ -37,6 +37,9 @@ public partial class MainWindow : Window
     private TranscriptLog? _transcript;
     private AssistantClient? _assistant;
     private QuestionTranscript? _questionTranscript;
+    private readonly ConversationContext _context = new();
+    private OverlayWindow? _overlay;
+    private DefaultDeviceScope? _defaultDevices;
     private bool Running => _incoming is not null;
 
     public MainWindow()
@@ -112,6 +115,7 @@ public partial class MainWindow : Window
     {
         ApiKeyBox.Password = _settings.ApiKey;
         AssistantEnabledCheck.IsChecked = _settings.AssistantEnabled;
+        MakeDefaultCheck.IsChecked = _settings.MakeCablesDefault;
         AssistantContextBox.Text = _settings.AssistantContext;
         MyLangCombo.ItemsSource = Languages.All;
         TheirLangCombo.ItemsSource = Languages.All;
@@ -136,6 +140,7 @@ public partial class MainWindow : Window
     {
         _settings.ApiKey = ApiKeyBox.Password;
         _settings.AssistantEnabled = AssistantEnabledCheck.IsChecked == true;
+        _settings.MakeCablesDefault = MakeDefaultCheck.IsChecked == true;
         _settings.AssistantContext = AssistantContextBox.Text;
         _settings.HeadphonesDeviceId = IdOf(HeadphonesCombo);
         _settings.MicDeviceId = IdOf(MicCombo);
@@ -189,16 +194,30 @@ public partial class MainWindow : Window
             StatusText.Text = "Conectando…";
             StartButton.IsEnabled = false;
 
+            // Assume os cabos como padrão do Windows para que Teams/WhatsApp/Meet peguem o áudio
+            // certo sozinhos. Restaurado em StopAll.
+            if (_settings.MakeCablesDefault)
+                ApplyDefaultDevices(enumerator, (SourceCombo.SelectedItem as SourceDevice)?.Device.Id);
+
             // Assistente (IA fora do Google): só liga se marcado e com chave preenchida.
             IncomingBox.Document.Blocks.Clear();
             OutgoingBox.Clear();
             _assistant = null;
+            _context.Clear();
             bool wantAssistant = AssistantEnabledCheck.IsChecked == true;
             bool haveKey = !string.IsNullOrWhiteSpace(_settings.ApiKey);
             if (wantAssistant && haveKey)
                 _assistant = new AssistantClient(_settings.ApiKey, _settings.AssistantModel, _settings.AssistantContext);
             Log.Write("Assistente", $"configuração: marcado={wantAssistant} · chave={(haveKey ? "ok" : "vazia")} · modelo={_settings.AssistantModel} · ativo={_assistant is not null}");
             _questionTranscript = new QuestionTranscript(IncomingBox, _assistant is null ? null : OpenSuggestion);
+
+            // Overlay flutuante com atalhos globais (só quando o assistente está ativo).
+            if (_assistant is not null)
+            {
+                _overlay = new OverlayWindow(_assistant, _context);
+                _overlay.Closed += (_, _) => _overlay = null;
+                _overlay.Show();
+            }
 
             _incoming = new Direction("Entrada",
                 entradaSource, Dev(_settings.HeadphonesDeviceId!),
@@ -242,6 +261,62 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Assume o controle dos dispositivos padrão do Windows: a saída padrão vira o cabo que
+    /// escutamos (os apps tocam ali e a tradução ouve) e a entrada padrão vira o lado de captura
+    /// do cabo do microfone virtual (os apps ouvem sua voz já traduzida). Assim não é preciso
+    /// escolher nada dentro do Teams/WhatsApp.
+    /// </summary>
+    private void ApplyDefaultDevices(MMDeviceEnumerator enumerator, string? entradaDeviceId)
+    {
+        string? captureId = null;
+        var notes = new List<string>();
+
+        // Lado de captura do cabo do microfone virtual (ex.: "CABLE Input" → "CABLE Output").
+        try
+        {
+            using var virtualMic = enumerator.GetDevice(_settings.VirtualMicDeviceId!);
+            using var counterpart = DefaultAudioDevices.FindCaptureCounterpart(enumerator, virtualMic);
+            if (counterpart is not null) captureId = counterpart.ID;
+            else notes.Add($"não achei o lado de gravação de \"{virtualMic.FriendlyName}\" — escolha o mic manualmente no app de chamada.");
+        }
+        catch (Exception ex)
+        {
+            notes.Add("não consegui resolver o microfone virtual: " + ex.Message);
+        }
+
+        if (entradaDeviceId is null)
+            notes.Add("a saída padrão não foi alterada porque a Entrada é um processo, não um cabo.");
+
+        if (entradaDeviceId is null && captureId is null)
+        {
+            DefaultDevicesText.Text = "Padrão do Windows: " + string.Join(" ", notes);
+            return;
+        }
+
+        try
+        {
+            _defaultDevices = DefaultDeviceScope.Create(entradaDeviceId, captureId);
+            var applied = new List<string>();
+            if (entradaDeviceId is not null) applied.Add($"saída → {NameOf(enumerator, entradaDeviceId)}");
+            if (captureId is not null) applied.Add($"entrada → {NameOf(enumerator, captureId)}");
+            DefaultDevicesText.Text = "Padrão do Windows: " + string.Join(" · ", applied)
+                + (notes.Count > 0 ? " · " + string.Join(" ", notes) : "");
+        }
+        catch (Exception ex)
+        {
+            // Não é motivo para abortar a tradução — só significa configurar na mão no app de chamada.
+            _defaultDevices = null;
+            DefaultDevicesText.Text = "Padrão do Windows: falhou (" + ex.Message + ") — configure entrada/saída no app de chamada.";
+            Log.Write("Padrão", "falha ao trocar dispositivos padrão: " + ex);
+        }
+    }
+
+    private static string NameOf(MMDeviceEnumerator enumerator, string id)
+    {
+        try { using var d = enumerator.GetDevice(id); return d.FriendlyName; } catch { return id; }
+    }
+
     private void Validate()
     {
         if (string.IsNullOrWhiteSpace(_settings.ApiKey))
@@ -262,18 +337,26 @@ public partial class MainWindow : Window
 
     private void Wire(Direction d, TextBox box)
     {
-        d.TranslatedText += t => Dispatcher.BeginInvoke(() =>
+        d.TranslatedText += t =>
         {
-            box.AppendText(t);
-            box.ScrollToEnd();
-        });
+            _context.Add("Você", t);
+            Dispatcher.BeginInvoke(() =>
+            {
+                box.AppendText(t);
+                box.ScrollToEnd();
+            });
+        };
         d.Status += s => Dispatcher.BeginInvoke(() => StatusText.Text = s);
     }
 
     /// <summary>Entrada usa RichTextBox com detecção de perguntas (via QuestionTranscript).</summary>
     private void WireIncoming(Direction d)
     {
-        d.TranslatedText += t => Dispatcher.BeginInvoke(() => _questionTranscript?.Append(t));
+        d.TranslatedText += t =>
+        {
+            _context.Add("Eles", t);
+            Dispatcher.BeginInvoke(() => _questionTranscript?.Append(t));
+        };
         d.Status += s => Dispatcher.BeginInvoke(() => StatusText.Text = s);
     }
 
@@ -327,11 +410,16 @@ public partial class MainWindow : Window
 
     private void StopAll()
     {
+        try { _overlay?.Close(); } catch { }
         try { _incoming?.Dispose(); } catch { }
         try { _outgoing?.Dispose(); } catch { }
         try { _recorder?.Dispose(); } catch { }
         try { _transcript?.Dispose(); } catch { }
         try { _assistant?.Dispose(); } catch { }
+        // Devolve os dispositivos padrão do Windows como estavam antes do Iniciar.
+        try { _defaultDevices?.Dispose(); } catch (Exception ex) { Log.Write("Padrão", "falha ao restaurar: " + ex); }
+        _defaultDevices = null;
+        _overlay = null;
         _incoming = _outgoing = null;
         _recorder = null;
         _transcript = null;
@@ -345,8 +433,9 @@ public partial class MainWindow : Window
         MuteButton.IsEnabled = running;
         MuteButton.Content = "🎙 Mic ligado";
         foreach (var c in new Control[] { SourceCombo, RefreshSourcesButton, HeadphonesCombo, MicCombo, VirtualMicCombo,
-                 MyLangCombo, TheirLangCombo, ApiKeyBox, AssistantEnabledCheck, AssistantContextBox })
+                 MyLangCombo, TheirLangCombo, ApiKeyBox, AssistantEnabledCheck, AssistantContextBox, MakeDefaultCheck })
             c.IsEnabled = !running;
+        if (!running) DefaultDevicesText.Text = "";
     }
 
     // ---------- live controls ----------

@@ -49,6 +49,12 @@ public sealed class Settings
 
     public double OriginalVolume { get; set; } = 0.20;
 
+    /// <summary>
+    /// Ao iniciar, torna os cabos virtuais os dispositivos padrão do Windows (e restaura ao parar),
+    /// para não precisar configurar entrada/saída dentro do Teams, WhatsApp, Meet...
+    /// </summary>
+    public bool MakeCablesDefault { get; set; } = true;
+
     // ---- Assistente de respostas (usa a mesma API do Google/Gemini, camada gratuita) ----
     /// <summary>Modelo Gemini (generateContent) para sugerir respostas. Flash é gratuito e rápido.</summary>
     public string AssistantModel { get; set; } = "gemini-2.5-flash";
