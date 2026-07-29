@@ -49,11 +49,12 @@ public sealed class LoopbackCapture : IAudioSource
         // (unlike a mic array — see MicCapture's FirstChannel).
         if (sp.WaveFormat.Channels > 1) sp = new AnyToMono(sp);
         SampleRate = sp.WaveFormat.SampleRate;
-        _chunkBytes = SampleRate / 10 * 2; // 100 ms mono PCM16
+        _chunkBytes = SampleRate / 25 * 2; // 40 ms mono PCM16 (era 100 ms — cada chunk é atraso puro)
         _outMono = new SampleToWaveProvider16(sp);
 
         Log.Write("Loopback", $"captura em '{device.FriendlyName}' ({_capture.WaveFormat.SampleRate} Hz " +
-                              $"{_capture.WaveFormat.Channels} ch), enviando {SampleRate} Hz mono sem resample.");
+                              $"{_capture.WaveFormat.Channels} ch), mono a {SampleRate} Hz " +
+                              $"(a rede recebe {Resample16k.Rate} Hz — ver Resample16k).");
     }
 
     public Task StartAsync()

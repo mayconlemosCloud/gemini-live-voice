@@ -87,7 +87,7 @@ public sealed class ProcessCapture : IAudioSource
     private void PumpLoop(CancellationToken ct)
     {
         const int channels = ProcessLoopback.Channels;
-        int chunkSamplesPerChannel = SampleRate / 10; // 100 ms
+        int chunkSamplesPerChannel = SampleRate / 25; // 40 ms (era 100 ms — cada chunk é atraso puro)
         var acc = new List<short>(chunkSamplesPerChannel * 2);
         var waitHandles = new[] { _bufferEvent!, ct.WaitHandle };
 

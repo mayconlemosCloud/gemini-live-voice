@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading.Channels;
 
 namespace GeminiTranslateV2;
 
@@ -26,6 +27,17 @@ public sealed class LiveClient : IDisposable
     private readonly int _inputRate;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
+    /// <summary>
+    /// Fila de saída de produtor único (thread de captura) e consumidor único (PumpOutboxAsync).
+    /// Existe para garantir ORDEM: antes os chunks eram enviados em fire-and-forget e disputavam
+    /// _sendLock, que não é FIFO — sob rajada o áudio chegava embaralhado ao servidor, atrapalhando
+    /// o VAD e a tradução. null = audioStreamEnd, que assim também respeita a ordem em relação
+    /// ao áudio já enfileirado.
+    /// </summary>
+    private readonly Channel<byte[]?> _outbox;
+    private int _dropCount;
+    private int _loggedDrops;
+
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
     private volatile bool _closing;
@@ -36,6 +48,12 @@ public sealed class LiveClient : IDisposable
     public event Action<string>? OutputText;
     public event Action<string>? Status;
 
+    /// <summary>
+    /// Chunks de 40 ms ainda esperando para ir para a rede. Deve ficar em 0–1. Qualquer valor
+    /// que se sustente acima disso é atraso puro criado AQUI (uplink saturado), não pelo modelo.
+    /// </summary>
+    public int OutboxBacklog => _outbox.Reader.Count;
+
     public LiveClient(string apiKey, string model, string targetLang, int inputRate, string tag)
     {
         _apiKey = apiKey;
@@ -43,6 +61,17 @@ public sealed class LiveClient : IDisposable
         _targetLang = targetLang;
         _inputRate = inputRate;
         _tag = tag;
+
+        // ~20 s a 40 ms/chunk; encher significa que a sessão já está quebrada. DropOldest
+        // descarta o áudio velho (inútil numa tradução ao vivo) e volta para o tempo real.
+        _outbox = Channel.CreateBounded<byte[]?>(
+            new BoundedChannelOptions(500)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false // áudio vem da captura, audioStreamEnd vem da UI
+            },
+            _ => Interlocked.Increment(ref _dropCount));
     }
 
     public async Task ConnectAsync(CancellationToken ct)
@@ -50,6 +79,7 @@ public sealed class LiveClient : IDisposable
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         await OpenAsync(_cts.Token); // first open awaited so auth errors surface in the UI
         _ = Task.Run(() => ReceiveLoopAsync(_cts.Token));
+        _ = Task.Run(() => PumpOutboxAsync(_cts.Token));
     }
 
     private async Task OpenAsync(CancellationToken ct)
@@ -79,7 +109,10 @@ public sealed class LiveClient : IDisposable
                 {
                     ["automaticActivityDetection"] = new JsonObject
                     {
-                        ["silenceDurationMs"] = 1500
+                        // 500 ms (era 1500): o servidor só começa a traduzir depois de fechar o
+                        // turno, então esta espera entra inteira na latência que o ouvinte sente.
+                        // Abaixo de ~400 ms ele passa a cortar em pausa de respiração.
+                        ["silenceDurationMs"] = 500
                     }
                 }
             }
@@ -88,36 +121,76 @@ public sealed class LiveClient : IDisposable
         await SendAsync(setup.ToJsonString(), ct);
     }
 
-    public async Task SendAudioAsync(byte[] pcm, CancellationToken ct)
-    {
-        if (!_ready || _ws is not { State: WebSocketState.Open }) return;
-        var msg = new JsonObject
-        {
-            ["realtimeInput"] = new JsonObject
-            {
-                ["audio"] = new JsonObject
-                {
-                    ["data"] = Convert.ToBase64String(pcm),
-                    ["mimeType"] = $"audio/pcm;rate={_inputRate}"
-                }
-            }
-        };
-        try { await SendAsync(msg.ToJsonString(), ct); }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { Log.Write(_tag, "erro ao enviar áudio: " + ex.Message); }
-    }
+    /// <summary>Enfileira um chunk de áudio. Não bloqueia a thread de captura.</summary>
+    public void EnqueueAudio(byte[] pcm) => _outbox.Writer.TryWrite(pcm);
 
     /// <summary>
     /// Tells the server the input paused (mic muted) so it flushes/closes the current turn
     /// cleanly. Only fired on an explicit local mute — never on a guessed silence timeout.
+    /// Vai pela mesma fila do áudio para chegar depois do que já foi capturado.
     /// </summary>
-    public async Task SendAudioStreamEndAsync(CancellationToken ct)
+    public void EnqueueAudioStreamEnd() => _outbox.Writer.TryWrite(null);
+
+    private async Task PumpOutboxAsync(CancellationToken ct)
     {
-        if (!_ready || _ws is not { State: WebSocketState.Open }) return;
-        var msg = new JsonObject { ["realtimeInput"] = new JsonObject { ["audioStreamEnd"] = true } };
-        try { await SendAsync(msg.ToJsonString(), ct); }
+        try
+        {
+            await foreach (var item in _outbox.Reader.ReadAllAsync(ct))
+            {
+                // Antes da sessão ficar pronta (ou durante uma reconexão) o áudio é descartado
+                // de propósito: enviá-lo depois só empurraria a conversa para trás no tempo.
+                if (!_ready || _ws is not { State: WebSocketState.Open }) continue;
+
+                int drops = Interlocked.Exchange(ref _dropCount, 0);
+                if (drops > 0)
+                {
+                    _loggedDrops += drops;
+                    Log.Write(_tag, $"fila de envio cheia: {drops} chunks descartados (total {_loggedDrops}).");
+                }
+
+                var msg = item is null
+                    ? new JsonObject { ["realtimeInput"] = new JsonObject { ["audioStreamEnd"] = true } }
+                    : new JsonObject
+                    {
+                        ["realtimeInput"] = new JsonObject
+                        {
+                            ["audio"] = new JsonObject
+                            {
+                                ["data"] = Convert.ToBase64String(item),
+                                ["mimeType"] = $"audio/pcm;rate={_inputRate}"
+                            }
+                        }
+                    };
+
+                long t0 = Environment.TickCount64;
+                try { await SendAsync(msg.ToJsonString(), ct); }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { Log.Write(_tag, "erro ao enviar: " + ex.Message); }
+                ReportBackpressure(Environment.TickCount64 - t0);
+            }
+        }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Log.Write(_tag, "erro ao enviar audioStreamEnd: " + ex.Message); }
+        catch (Exception ex) { Log.Write(_tag, $"fila de envio morreu: {ex}"); }
+    }
+
+    private long _lastBacklogLog;
+
+    /// <summary>
+    /// Um chunk de 40 ms tem 40 ms para sair. Se o SendAsync demora mais que isso de forma
+    /// sustentada, o uplink não acompanha e a fila vira atraso permanente — o servidor devolve a
+    /// tradução em 1× tempo real, então nada do que se atrasou aqui é recuperado depois.
+    /// Amostrado no máximo a cada 5 s para não poluir o log.
+    /// </summary>
+    private void ReportBackpressure(long sendMs)
+    {
+        int backlog = _outbox.Reader.Count;
+        if (backlog <= 2 && sendMs < 100) return;
+
+        long now = Environment.TickCount64;
+        if (now - _lastBacklogLog < 5000) return;
+        _lastBacklogLog = now;
+        Log.Write(_tag, $"uplink lento: envio levou {sendMs} ms, {backlog} chunks na fila " +
+                        $"(~{backlog * 40} ms de atraso acumulado).");
     }
 
     private async Task SendAsync(string json, CancellationToken ct)
@@ -223,6 +296,7 @@ public sealed class LiveClient : IDisposable
     public void Dispose()
     {
         _closing = true;
+        try { _outbox.Writer.TryComplete(); } catch { }
         try { _cts?.Cancel(); } catch { }
         try { _ws?.Dispose(); } catch { }
         _sendLock.Dispose();

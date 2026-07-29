@@ -14,6 +14,8 @@ public sealed class Direction : IDisposable
     private readonly IAudioSource _in;
     private readonly AudioOut _out;
     private readonly LiveClient _client;
+    private readonly Resample16k _wire;
+    private readonly LatencyProbe _probe;
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
 
@@ -34,7 +36,7 @@ public sealed class Direction : IDisposable
         get => _in.Muted;
         set
         {
-            if (value && !_in.Muted) _ = _client.SendAudioStreamEndAsync(_cts.Token);
+            if (value && !_in.Muted) _client.EnqueueAudioStreamEnd();
             _in.Muted = value;
         }
     }
@@ -59,13 +61,16 @@ public sealed class Direction : IDisposable
         Name = name;
         _in = inputSource;
         _out = new AudioOut(outputDevice, _in.SampleRate, originalVolume, name);
-        _client = new LiveClient(apiKey, model, targetLang, _in.SampleRate, name);
+        // A rede recebe 16 kHz (taxa de entrada da Live API); a voz original continua nativa.
+        _wire = new Resample16k(_in.SampleRate);
+        _client = new LiveClient(apiKey, model, targetLang, Resample16k.Rate, name);
+        _probe = new LatencyProbe(name);
 
         try
         {
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             _sentWav = new WaveFileWriter(Path.Combine(Log.Folder, $"{name}-enviado-{stamp}.wav"),
-                new WaveFormat(_in.SampleRate, 16, 1));
+                new WaveFormat(Resample16k.Rate, 16, 1));
             _recvWav = new WaveFileWriter(Path.Combine(Log.Folder, $"{name}-recebido-{stamp}.wav"),
                 new WaveFormat(24000, 16, 1));
         }
@@ -74,12 +79,16 @@ public sealed class Direction : IDisposable
         _in.ChunkAvailable += chunk =>
         {
             _out.EnqueueOriginal(chunk); // the original voice always flows
-            lock (_wavLock) { try { _sentWav?.Write(chunk, 0, chunk.Length); } catch { } }
-            _ = _client.SendAudioAsync(chunk, _cts.Token); // always forwarded — server owns VAD
+            var wire = _wire.Feed(chunk);
+            if (wire is null) return;
+            _probe.Spoke(wire);
+            lock (_wavLock) { try { _sentWav?.Write(wire, 0, wire.Length); } catch { } }
+            _client.EnqueueAudio(wire); // always forwarded, in order — server owns VAD
         };
         _in.Level += l => Level?.Invoke(l);
         _client.AudioReceived += pcm =>
         {
+            _probe.Heard(pcm, _client.OutboxBacklog);
             lock (_wavLock) { try { _recvWav?.Write(pcm, 0, pcm.Length); } catch { } }
             _out.EnqueueTranslation(pcm);
         };

@@ -102,16 +102,17 @@ public sealed class AudioOut : IDisposable
 
 /// <summary>
 /// Anti-acúmulo: when continuous speech makes translated audio queue up faster than it plays
-/// out (the delay that grows over a long session), consume the source at 1.1× until the queue
-/// drains, then drop back to 1×. Plain linear interpolation — pitch rises ~10% while engaged,
-/// the same trade-off Meet makes for live catch-up. Hysteresis (engage at 3 s, release at
-/// 0.75 s) keeps it from flapping on ordinary bursts.
+/// out (the delay that grows over a long session), consume the source at 1.15× until the queue
+/// drains, then drop back to 1×. Plain linear interpolation — pitch rises ~15% while engaged,
+/// the same trade-off Meet makes for live catch-up. Hysteresis (engage at 1 s, release at
+/// 0.4 s) keeps it from flapping on ordinary bursts. Engaging at 3 s (as before) let the queue
+/// snowball past the point 1.1× could drain it; 1 s reacts before that.
 /// </summary>
 internal sealed class CatchUp : ISampleProvider
 {
-    private const float FastRate = 1.10f;
-    private const double EngageMs = 3000;
-    private const double ReleaseMs = 750;
+    private const float FastRate = 1.15f;
+    private const double EngageMs = 1000;
+    private const double ReleaseMs = 400;
 
     private readonly ISampleProvider _src; // mono; ReadFully source, so reads always fill
     private readonly BufferedWaveProvider _queue;
