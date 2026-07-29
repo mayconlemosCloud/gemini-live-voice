@@ -43,8 +43,12 @@ public sealed class LatencyProbe
         }
     }
 
-    /// <summary>Chunk de tradução que ACABOU de chegar (24 kHz mono PCM16).</summary>
-    public void Heard(byte[] pcm, int outboxBacklog)
+    /// <summary>
+    /// Chunk de tradução que ACABOU de chegar (24 kHz mono PCM16). <paramref name="playoutMs"/> é
+    /// o que já está na fila de reprodução: o probe mede até a CHEGADA, e essa fila é o que ainda
+    /// se soma antes de sair no fone.
+    /// </summary>
+    public void Heard(byte[] pcm, int outboxBacklog, double playoutMs)
     {
         if (Rms(pcm) < SpeechRms) return;
         double now = _clock.Elapsed.TotalMilliseconds;
@@ -60,8 +64,9 @@ public sealed class LatencyProbe
 
         // 40 ms por chunk na fila de envio — backlog alto é o app segurando áudio, não o modelo.
         double backlogMs = outboxBacklog * 40.0;
-        Log.Write(_tag, $"ATRASO {(now - start) / 1000:0.00} s da fala até a tradução " +
-                        $"(fila de envio {backlogMs:0} ms).");
+        Log.Write(_tag, $"ATRASO {(now - start + playoutMs) / 1000:0.00} s da fala até o fone " +
+                        $"= {(now - start) / 1000:0.00} s até chegar + {playoutMs:0} ms na fila de " +
+                        $"reprodução (fila de envio {backlogMs:0} ms).");
     }
 
     private static float Rms(byte[] pcm)

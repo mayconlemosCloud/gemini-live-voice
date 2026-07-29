@@ -55,17 +55,17 @@ public sealed class AudioOut : IDisposable
         _origBuf = new BufferedWaveProvider(new WaveFormat(originalRate, 16, 1))
         { ReadFully = true, BufferDuration = TimeSpan.FromSeconds(5), DiscardOnBufferOverflow = true };
 
-        // 40 ms preroll + 50 ms WASAPI buffer (were 150/100): share-tab.html proved zero preroll
-        // is already smooth, so keep only a small guard against drip-feed stutter.
+        // 20 ms preroll + 30 ms WASAPI buffer (were 150/100, depois 40/50): share-tab.html provou
+        // que preroll zero já é fluido, então sobra só uma guarda mínima contra engasgo.
         var mixFormat = device.AudioClient.MixFormat;
         _catchUp = new CatchUp(_transBuf.ToSampleProvider(), _transBuf, tag);
-        ISampleProvider trans = ToDevice(new Preroll(_catchUp, _transBuf, 40), mixFormat);
-        _origVolume = new VolumeSampleProvider(ToDevice(new Preroll(_origBuf.ToSampleProvider(), _origBuf, 40), mixFormat))
+        ISampleProvider trans = ToDevice(new Preroll(_catchUp, _transBuf, 20), mixFormat);
+        _origVolume = new VolumeSampleProvider(ToDevice(new Preroll(_origBuf.ToSampleProvider(), _origBuf, 20), mixFormat))
         { Volume = Math.Clamp(originalVolume, 0f, 1f) };
 
         var mix = new MixingSampleProvider(new[] { trans, _origVolume }) { ReadFully = true };
         MixFormat = mix.WaveFormat;
-        _output = new WasapiOut(device, AudioClientShareMode.Shared, true, 50);
+        _output = new WasapiOut(device, AudioClientShareMode.Shared, true, 30);
         _output.Init(new SampleToWaveProvider(new TapSampleProvider(mix, () => _renderTap)));
         Log.Write(tag, $"saída em '{device.FriendlyName}' ({mixFormat.SampleRate} Hz {mixFormat.Channels} ch), original a {originalVolume:P0}.");
     }
@@ -104,9 +104,15 @@ public sealed class AudioOut : IDisposable
 /// Anti-acúmulo: when continuous speech makes translated audio queue up faster than it plays
 /// out (the delay that grows over a long session), consume the source at 1.15× until the queue
 /// drains, then drop back to 1×. Plain linear interpolation — pitch rises ~15% while engaged,
-/// the same trade-off Meet makes for live catch-up. Hysteresis (engage at 1 s, release at
-/// 0.4 s) keeps it from flapping on ordinary bursts. Engaging at 3 s (as before) let the queue
-/// snowball past the point 1.1× could drain it; 1 s reacts before that.
+/// the same trade-off Meet makes for live catch-up.
+///
+/// Hysteresis (engage at 1 s, release at 0.4 s) keeps it from flapping on ordinary bursts.
+/// Engaging at 3 s (as before) let the queue snowball past the point 1.1× could drain it.
+///
+/// NÃO baixe para ~300 ms: foi testado (log session-20260729-123206) e engata dezenas de vezes
+/// por minuto sem ganho nenhum. O servidor entrega o dub em blocos de 250 ms, então a fila
+/// oscila entre ~100 e ~400 ms só por granularidade de bloco — medida em regime, ela fica em
+/// 36–44 ms. Não existe fila acumulada para drenar aqui; o atraso está antes da chegada.
 /// </summary>
 internal sealed class CatchUp : ISampleProvider
 {

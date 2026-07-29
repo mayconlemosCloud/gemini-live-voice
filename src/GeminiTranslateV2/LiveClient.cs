@@ -43,6 +43,9 @@ public sealed class LiveClient : IDisposable
     private volatile bool _closing;
     private volatile bool _ready;
 
+    /// <summary>Desligado automaticamente se a API rejeitar os campos de sensibilidade — ver Handle.</summary>
+    private volatile bool _vadSensitivity = true;
+
     public event Action<byte[]>? AudioReceived;
     public event Action<string>? InputText;
     public event Action<string>? OutputText;
@@ -107,18 +110,37 @@ public sealed class LiveClient : IDisposable
                 ["outputAudioTranscription"] = new JsonObject(),
                 ["realtimeInputConfig"] = new JsonObject
                 {
-                    ["automaticActivityDetection"] = new JsonObject
-                    {
-                        // 500 ms (era 1500): o servidor só começa a traduzir depois de fechar o
-                        // turno, então esta espera entra inteira na latência que o ouvinte sente.
-                        // Abaixo de ~400 ms ele passa a cortar em pausa de respiração.
-                        ["silenceDurationMs"] = 500
-                    }
+                    ["automaticActivityDetection"] = BuildVad()
                 }
             }
         };
         Log.Write(_tag, "setup: " + setup.ToJsonString());
         await SendAsync(setup.ToJsonString(), ct);
+    }
+
+    /// <summary>
+    /// Detecção de atividade do servidor, ajustada para FALA PAUSADA.
+    ///
+    /// Início SENSÍVEL (START_SENSITIVITY_HIGH): perceber que a fala começou o quanto antes é
+    /// sempre bom e não tem contrapartida.
+    ///
+    /// Fim TOLERANTE (END_SENSITIVITY_LOW + 900 ms de silêncio): esta é a parte que importa para
+    /// quem fala com pausas. Com fim sensível, cada pausa de respiração fecha o turno e o modelo
+    /// traduz um pedaço solto — e como a ordem das palavras muda entre português e inglês, meia
+    /// frase traduzida sozinha sai errada, não só cortada. Custo: ao TERMINAR de falar de verdade,
+    /// o modelo espera 900 ms em vez de 500 antes de fechar. É um preço pequeno perto de frases
+    /// quebradas, e não afeta o atraso durante a fala (medido: a tradução do TEXTO sai 120–210 ms
+    /// depois do que você diz — ver LatencyProbe e o log session-20260729-123206).
+    /// </summary>
+    private JsonObject BuildVad()
+    {
+        var vad = new JsonObject { ["silenceDurationMs"] = _vadSensitivity ? 900 : 500 };
+        if (_vadSensitivity)
+        {
+            vad["startOfSpeechSensitivity"] = "START_SENSITIVITY_HIGH";
+            vad["endOfSpeechSensitivity"] = "END_SENSITIVITY_LOW";
+        }
+        return vad;
     }
 
     /// <summary>Enfileira um chunk de áudio. Não bloqueia a thread de captura.</summary>
@@ -270,6 +292,18 @@ public sealed class LiveClient : IDisposable
         {
             var msg = err["message"]?.GetValue<string>() ?? err.ToJsonString();
             Log.Write(_tag, "erro do servidor: " + msg);
+
+            // Se a rejeição for dos campos de sensibilidade do VAD, desliga-os e deixa a
+            // reconexão subir sem eles — uma tentativa de reduzir latência nunca deve derrubar
+            // uma chamada em andamento.
+            if (_vadSensitivity && msg.Contains("ensitivity", StringComparison.OrdinalIgnoreCase))
+            {
+                _vadSensitivity = false;
+                Log.Write(_tag, "a API recusou startOfSpeechSensitivity/endOfSpeechSensitivity — " +
+                                "reconectando sem eles.");
+                return;
+            }
+
             Status?.Invoke($"{_tag}: erro — {msg}");
             return;
         }

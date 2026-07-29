@@ -27,7 +27,9 @@ public sealed class MicCapture : IAudioSource
 
     public MicCapture(MMDevice device)
     {
-        _capture = new WasapiCapture(device);
+        // Buffer de captura de 20 ms com sincronismo por evento (o padrão do NAudio é 100 ms, e
+        // esses 80 ms extras entram inteiros no atraso que o ouvinte sente).
+        _capture = new WasapiCapture(device, useEventSync: true, audioBufferMillisecondsLength: 20);
         _buffer = new BufferedWaveProvider(_capture.WaveFormat)
         {
             ReadFully = false,

@@ -15,6 +15,7 @@ public sealed class Direction : IDisposable
     private readonly AudioOut _out;
     private readonly LiveClient _client;
     private readonly Resample16k _wire;
+    private readonly PauseTrimmer _trimmer;
     private readonly LatencyProbe _probe;
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
@@ -64,6 +65,7 @@ public sealed class Direction : IDisposable
         // A rede recebe 16 kHz (taxa de entrada da Live API); a voz original continua nativa.
         _wire = new Resample16k(_in.SampleRate);
         _client = new LiveClient(apiKey, model, targetLang, Resample16k.Rate, name);
+        _trimmer = new PauseTrimmer(name, Resample16k.Rate, Resample16k.Rate / 25 * 2);
         _probe = new LatencyProbe(name);
 
         try
@@ -82,13 +84,14 @@ public sealed class Direction : IDisposable
             var wire = _wire.Feed(chunk);
             if (wire is null) return;
             _probe.Spoke(wire);
+            if (!_trimmer.ShouldSend(wire)) return; // dead air depois do turno já fechado
             lock (_wavLock) { try { _sentWav?.Write(wire, 0, wire.Length); } catch { } }
-            _client.EnqueueAudio(wire); // always forwarded, in order — server owns VAD
+            _client.EnqueueAudio(wire); // ordem preservada — o servidor continua dono do VAD
         };
         _in.Level += l => Level?.Invoke(l);
         _client.AudioReceived += pcm =>
         {
-            _probe.Heard(pcm, _client.OutboxBacklog);
+            _probe.Heard(pcm, _client.OutboxBacklog, _out.TranslationQueue.TotalMilliseconds);
             lock (_wavLock) { try { _recvWav?.Write(pcm, 0, pcm.Length); } catch { } }
             _out.EnqueueTranslation(pcm);
         };
