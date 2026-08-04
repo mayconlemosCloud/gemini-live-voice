@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using NAudio.CoreAudioApi;
 
@@ -42,9 +44,21 @@ public partial class MainWindow : Window
     private DefaultDeviceScope? _defaultDevices;
     private bool Running => _incoming is not null;
 
+    // Atalho global para reexibir/esconder a janela — ela não está na barra de tarefas nem no Alt+Tab.
+    [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    private const uint MOD_CONTROL = 0x0002, MOD_SHIFT = 0x0004, MOD_NOREPEAT = 0x4000;
+    private const int WM_HOTKEY = 0x0312;
+    private const int HK_TOGGLE_WINDOW = 10;
+    public const string ShowHotkeyText = "Ctrl+Shift+0";
+    private HwndSource? _hwndSource;
+
     public MainWindow()
     {
         InitializeComponent();
+        ApplyStealth(_settings.HideFromScreenShare);
+        Stealth.Register(this);
+        SourceInitialized += OnSourceInitializedHotkey;
         LoadDevices();
         LoadSources();
         ApplySettings();
@@ -53,7 +67,52 @@ public partial class MainWindow : Window
         delayTimer.Tick += (_, _) => UpdateDelayText();
         delayTimer.Start();
 
-        Closing += (_, _) => { SaveSettings(); StopAll(); };
+        Closing += (_, _) => { SaveSettings(); StopAll(); ReleaseHotkey(); };
+    }
+
+    // ---------- atalho global de mostrar/esconder ----------
+
+    private void OnSourceInitializedHotkey(object? sender, EventArgs e)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        _hwndSource = HwndSource.FromHwnd(handle);
+        _hwndSource?.AddHook(HotkeyProc);
+        // Só dá para trocar WS_EX_TOOLWINDOW depois que o HWND existe; aqui a janela ainda não apareceu.
+        Stealth.SetHiddenFromAltTab(this, Stealth.Enabled);
+        // '0' = 0x30
+        bool ok = RegisterHotKey(handle, HK_TOGGLE_WINDOW, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, 0x30);
+        Log.Write("Stealth", $"atalho {ShowHotkeyText} (mostrar/esconder janela) registrado: {ok}");
+        if (!ok) StatusText.Text = $"atalho {ShowHotkeyText} em uso por outro app";
+    }
+
+    private void ReleaseHotkey()
+    {
+        try { UnregisterHotKey(new WindowInteropHelper(this).Handle, HK_TOGGLE_WINDOW); } catch { }
+        _hwndSource?.RemoveHook(HotkeyProc);
+    }
+
+    private IntPtr HotkeyProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY && wParam.ToInt32() == HK_TOGGLE_WINDOW)
+        {
+            ToggleWindowVisibility();
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>Esconde a janela se ela está à vista e em foco; caso contrário mostra e traz para frente.</summary>
+    private void ToggleWindowVisibility()
+    {
+        if (IsVisible && IsActive)
+        {
+            Hide();
+            return;
+        }
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Focus();
     }
 
     private void UpdateDelayText()
@@ -64,7 +123,7 @@ public partial class MainWindow : Window
             return;
         }
         static string Part(string name, Direction d) =>
-            $"{name} {d.TranslationQueue.TotalSeconds:0.0}s{(d.CatchingUp ? " ⏩" : "")}";
+            $"{name} {d.TranslationQueue.TotalSeconds:0.0}s";
         DelayText.Text = $"fila: {Part("entrada", _incoming)} · {Part("saída", _outgoing)}";
     }
 
@@ -445,6 +504,22 @@ public partial class MainWindow : Window
         if (_outgoing is null) return;
         _outgoing.Muted = !_outgoing.Muted;
         MuteButton.Content = _outgoing.Muted ? "🔇 Mic mudo" : "🎙 Mic ligado";
+    }
+
+    private void OnStealthToggle(object sender, RoutedEventArgs e) =>
+        ApplyStealth(!Stealth.Enabled);
+
+    /// <summary>Liga/desliga a ocultação em todas as janelas do app e reflete no botão.</summary>
+    private void ApplyStealth(bool on)
+    {
+        Stealth.SetEnabled(on);
+        // Sem isso a janela some da captura, mas a miniatura que o Alt+Tab desenha ainda vaza.
+        Stealth.SetHiddenFromAltTab(this, on);
+        _settings.HideFromScreenShare = on;
+        StealthButton.Content = on ? "🕶 Oculto na tela" : "👁 Visível na tela";
+        StealthButton.ToolTip = on
+            ? $"Ligado: o app não aparece em compartilhamento de tela, gravação, print nem no Alt+Tab.\n{ShowHotkeyText} mostra/esconde esta janela. Clique para deixá-la visível."
+            : "Desligado: o app aparece normalmente para quem vê sua tela e volta ao Alt+Tab. Clique para ocultar.";
     }
 
     private void OnVolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

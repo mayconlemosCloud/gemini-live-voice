@@ -15,7 +15,7 @@ public sealed class Direction : IDisposable
     private readonly AudioOut _out;
     private readonly LiveClient _client;
     private readonly Resample16k _wire;
-    private readonly PauseTrimmer _trimmer;
+    private readonly InputGain _gain;
     private readonly LatencyProbe _probe;
     private readonly CancellationTokenSource _cts = new();
     private bool _disposed;
@@ -50,9 +50,6 @@ public sealed class Direction : IDisposable
     /// <summary>Translated audio queued for playback — the live delay the listener hears.</summary>
     public TimeSpan TranslationQueue => _out.TranslationQueue;
 
-    /// <summary>True while the queue got long and the translation is playing at 1.1×.</summary>
-    public bool CatchingUp => _out.CatchingUp;
-
     /// <summary>Tap on this direction's rendered mix (exactly what its listener hears).</summary>
     public Action<float[], int, int>? OutputTap { set => _out.RenderTap = value; }
 
@@ -65,7 +62,7 @@ public sealed class Direction : IDisposable
         // A rede recebe 16 kHz (taxa de entrada da Live API); a voz original continua nativa.
         _wire = new Resample16k(_in.SampleRate);
         _client = new LiveClient(apiKey, model, targetLang, Resample16k.Rate, name);
-        _trimmer = new PauseTrimmer(name, Resample16k.Rate, Resample16k.Rate / 25 * 2);
+        _gain = new InputGain(name);
         _probe = new LatencyProbe(name);
 
         try
@@ -84,9 +81,16 @@ public sealed class Direction : IDisposable
             var wire = _wire.Feed(chunk);
             if (wire is null) return;
             _probe.Spoke(wire);
-            if (!_trimmer.ShouldSend(wire)) return; // dead air depois do turno já fechado
+
+            // O stream vai INTEIRO para a rede — silêncio, pausas e respiração incluídos. O
+            // PauseTrimmer que existia aqui cortava o "dead air" para economizar atraso, mas ritmo
+            // é uma das três coisas que este modelo reproduz (entonação, ritmo, tom): cortar pausa
+            // do que ele ouve é apagar prosódia na origem. Pior, o limiar dele (RMS 0,01) caía no
+            // p10 medido da fala real neste setup — o fim de uma vogal sustentada tipo "testeee",
+            // que decai de volume, era exatamente o que corria risco de ser tratado como silêncio.
+            _gain.Apply(wire);
             lock (_wavLock) { try { _sentWav?.Write(wire, 0, wire.Length); } catch { } }
-            _client.EnqueueAudio(wire); // ordem preservada — o servidor continua dono do VAD
+            _client.EnqueueAudio(wire); // ordem preservada — o servidor é dono da segmentação
         };
         _in.Level += l => Level?.Invoke(l);
         _client.AudioReceived += pcm =>

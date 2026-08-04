@@ -48,7 +48,7 @@ Proteções e otimizações embutidas:
 
 ## Pré‑requisitos
 
-1. **Windows 10/11** e **.NET 9 SDK** (`dotnet --version`).
+1. **Windows 10/11** e **.NET 10 SDK** (`dotnet --version`).
 2. **API key** do Google AI Studio com acesso ao modelo
    `gemini-3.5-live-translate-preview` (é preview — pode exigir habilitação na conta).
 3. **VB‑CABLE** (cabo de áudio virtual, grátis) — necessário para a direção de **saída**:
@@ -93,7 +93,7 @@ O app mostra um ⚠ aviso quando "Áudio da reunião" e "fone" são o mesmo disp
 ## Rodar
 
 ```powershell
-cd src\GeminiLiveTranslate
+cd src\GeminiTranslateV2
 dotnet run -c Release
 ```
 
@@ -101,7 +101,7 @@ Ou compile e execute o `.exe`:
 
 ```powershell
 dotnet build -c Release
-.\bin\Release\net9.0-windows\GeminiLiveTranslate.exe
+.\bin\Release\net10.0-windows\GeminiTranslateV2.exe
 ```
 
 No app:
@@ -118,21 +118,37 @@ As configurações (incluindo a API key) ficam em
 ## Estrutura do código
 
 ```
-src/GeminiLiveTranslate/
-  Audio/
-    AudioDeviceService.cs      Enumera/resolve dispositivos WASAPI
-    AudioCaptureSource.cs      Captura mic/loopback → 16 kHz mono PCM (com gate de silêncio)
-    PcmPlayer.cs               Toca 24 kHz mono → dispositivo escolhido (resampla p/ mix format)
-    ChannelSampleProviders.cs  Conversão de canais (down/up-mix)
-  Gemini/
-    GeminiLiveClient.cs        WebSocket BidiGenerateContent + translationConfig
-  Translation/
-    TranslationDirection.cs    Uma direção: captura → Gemini → playback
-    TranslationEngine.cs       Orquestra as duas direções
-  Config/
-    AppSettings.cs             Persistência em %AppData%
-    Languages.cs               Lista de idiomas
-  MainWindow.xaml(.cs)         UI estilo Teams/Meet
+src/GeminiTranslateV2/
+  Captura de áudio
+    IAudioSource.cs            Interface comum das fontes de captura
+    MicCapture.cs              Captura do microfone real
+    LoopbackCapture.cs         Captura WASAPI loopback (áudio da reunião)
+    ProcessCapture.cs          Captura por processo (só o app da reunião)
+    ProcessLoopback.cs         Interop do loopback por processo
+    DefaultAudioDevices.cs     Resolve/enumera dispositivos WASAPI padrão
+    Resample16k.cs             Converte qualquer formato → 16 kHz mono PCM
+    InputGain.cs               Ganho/normalização do sinal de entrada
+    AudioOut.cs                Reprodução PCM 24 kHz no dispositivo escolhido
+  Gemini
+    LiveClient.cs              WebSocket BidiGenerateContent + translationConfig
+    Direction.cs               Uma direção: captura → Gemini → playback
+    AssistantClient.cs         Sugestões de resposta (assistente)
+  Contexto e histórico
+    ConversationContext.cs     Contexto corrente da conversa
+    ConversationRecorder.cs    Gravação da conversa
+    QuestionTranscript.cs      Detecção/registro de perguntas
+    TranscriptLog.cs           Log de transcrições
+  Captura de tela
+    ScreenCapture.cs           Captura de tela
+    RegionSelectForm.cs        Seleção de região (WinForms)
+  Infra
+    Settings.cs                Persistência em %AppData%
+    Log.cs                     Log em arquivo + painel
+    LatencyProbe.cs            Medição de latência
+  UI
+    MainWindow.xaml(.cs)       Janela principal
+    OverlayWindow.xaml(.cs)    Overlay sobre a reunião
+    SuggestionWindow.xaml(.cs) Janela de sugestões
 ```
 
 ---

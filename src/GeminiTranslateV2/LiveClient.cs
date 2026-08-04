@@ -10,10 +10,14 @@ namespace GeminiTranslateV2;
 /// <summary>
 /// Gemini Live translate session over a raw WebSocket (proven more reliable in this project
 /// than the official Google.GenAI SDK — see GeminiTranslateLite / share-tab.html, both of which
-/// used this same raw approach successfully). Turn segmentation is the server's job
-/// (realtimeInputConfig.automaticActivityDetection.silenceDurationMs below); we only signal
-/// audioStreamEnd on an explicit local pause (mic muted), never on a guessed silence timeout —
-/// that guessing is what caused problems in earlier versions of this app.
+/// used this same raw approach successfully).
+///
+/// Segmentação de turno é problema do servidor, e agora INTEIRAMENTE dele: não mandamos mais
+/// realtimeInputConfig. O gemini-3.5-live-translate-preview espera um stream contínuo e cru e
+/// cuida sozinho de detectar idioma, fechar frases e preservar entonação/ritmo/tom. Tudo que
+/// mexe nesse stream antes de ele chegar lá — VAD nosso, gate de silêncio, corte de pausa —
+/// tira do modelo a informação de prosódia que ele usa. Do nosso lado só existe audioStreamEnd
+/// numa pausa local explícita (mic mutado), nunca num timeout de silêncio adivinhado.
 /// </summary>
 public sealed class LiveClient : IDisposable
 {
@@ -42,9 +46,6 @@ public sealed class LiveClient : IDisposable
     private CancellationTokenSource? _cts;
     private volatile bool _closing;
     private volatile bool _ready;
-
-    /// <summary>Desligado automaticamente se a API rejeitar os campos de sensibilidade — ver Handle.</summary>
-    private volatile bool _vadSensitivity = true;
 
     public event Action<byte[]>? AudioReceived;
     public event Action<string>? InputText;
@@ -92,6 +93,17 @@ public sealed class LiveClient : IDisposable
         _ws = new ClientWebSocket();
         await _ws.ConnectAsync(new Uri($"{Endpoint}?key={Uri.EscapeDataString(_apiKey)}"), ct);
 
+        // realtimeInputConfig.automaticActivityDetection NÃO entra aqui. A doc do live-translate
+        // não documenta VAD nenhum: este modelo segmenta e detecta idioma sozinho, num stream
+        // contínuo. Configurar VAD à mão era um override não documentado em cima do único
+        // componente que decide onde uma frase começa e termina — e é dessa segmentação que sai a
+        // curva de entonação. O AI Studio não manda esse campo.
+        //
+        // inputAudioTranscription/outputAudioTranscription ficam no nível de SETUP, não dentro de
+        // generationConfig. O exemplo da doc mostra os dois dentro de generationConfig, mas o
+        // exemplo está errado: a API fecha a conexão com
+        //   InvalidPayloadData: Unknown name "inputAudioTranscription" at 'setup.generation_config'
+        // (reproduzido no log session-20260729-192203). Não mova de novo.
         var setup = new JsonObject
         {
             ["setup"] = new JsonObject
@@ -107,40 +119,11 @@ public sealed class LiveClient : IDisposable
                     }
                 },
                 ["inputAudioTranscription"] = new JsonObject(),
-                ["outputAudioTranscription"] = new JsonObject(),
-                ["realtimeInputConfig"] = new JsonObject
-                {
-                    ["automaticActivityDetection"] = BuildVad()
-                }
+                ["outputAudioTranscription"] = new JsonObject()
             }
         };
         Log.Write(_tag, "setup: " + setup.ToJsonString());
         await SendAsync(setup.ToJsonString(), ct);
-    }
-
-    /// <summary>
-    /// Detecção de atividade do servidor, ajustada para FALA PAUSADA.
-    ///
-    /// Início SENSÍVEL (START_SENSITIVITY_HIGH): perceber que a fala começou o quanto antes é
-    /// sempre bom e não tem contrapartida.
-    ///
-    /// Fim TOLERANTE (END_SENSITIVITY_LOW + 900 ms de silêncio): esta é a parte que importa para
-    /// quem fala com pausas. Com fim sensível, cada pausa de respiração fecha o turno e o modelo
-    /// traduz um pedaço solto — e como a ordem das palavras muda entre português e inglês, meia
-    /// frase traduzida sozinha sai errada, não só cortada. Custo: ao TERMINAR de falar de verdade,
-    /// o modelo espera 900 ms em vez de 500 antes de fechar. É um preço pequeno perto de frases
-    /// quebradas, e não afeta o atraso durante a fala (medido: a tradução do TEXTO sai 120–210 ms
-    /// depois do que você diz — ver LatencyProbe e o log session-20260729-123206).
-    /// </summary>
-    private JsonObject BuildVad()
-    {
-        var vad = new JsonObject { ["silenceDurationMs"] = _vadSensitivity ? 900 : 500 };
-        if (_vadSensitivity)
-        {
-            vad["startOfSpeechSensitivity"] = "START_SENSITIVITY_HIGH";
-            vad["endOfSpeechSensitivity"] = "END_SENSITIVITY_LOW";
-        }
-        return vad;
     }
 
     /// <summary>Enfileira um chunk de áudio. Não bloqueia a thread de captura.</summary>
@@ -292,18 +275,6 @@ public sealed class LiveClient : IDisposable
         {
             var msg = err["message"]?.GetValue<string>() ?? err.ToJsonString();
             Log.Write(_tag, "erro do servidor: " + msg);
-
-            // Se a rejeição for dos campos de sensibilidade do VAD, desliga-os e deixa a
-            // reconexão subir sem eles — uma tentativa de reduzir latência nunca deve derrubar
-            // uma chamada em andamento.
-            if (_vadSensitivity && msg.Contains("ensitivity", StringComparison.OrdinalIgnoreCase))
-            {
-                _vadSensitivity = false;
-                Log.Write(_tag, "a API recusou startOfSpeechSensitivity/endOfSpeechSensitivity — " +
-                                "reconectando sem eles.");
-                return;
-            }
-
             Status?.Invoke($"{_tag}: erro — {msg}");
             return;
         }

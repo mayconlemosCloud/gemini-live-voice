@@ -30,6 +30,13 @@ public sealed class RegionSelectForm : Form
         KeyPreview = true;
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // O retângulo de seleção também não deve vazar para quem vê sua tela.
+        Stealth.ApplyToHandle(Handle);
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         _start = e.Location;

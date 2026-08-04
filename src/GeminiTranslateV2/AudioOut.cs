@@ -17,15 +17,11 @@ public sealed class AudioOut : IDisposable
     private readonly BufferedWaveProvider _transBuf;
     private readonly BufferedWaveProvider _origBuf;
     private readonly VolumeSampleProvider _origVolume;
-    private readonly CatchUp _catchUp;
     private volatile Action<float[], int, int>? _renderTap;
     private bool _disposed;
 
     /// <summary>Translated audio waiting to be played — the live delay the listener hears.</summary>
     public TimeSpan TranslationQueue => _transBuf.BufferedDuration;
-
-    /// <summary>True while the queue got long and the translation is playing at 1.1×.</summary>
-    public bool CatchingUp => _catchUp.Fast;
 
     /// <summary>Format of the final mixed stream (IEEE float, device mix rate/channels).</summary>
     public WaveFormat MixFormat { get; }
@@ -57,9 +53,13 @@ public sealed class AudioOut : IDisposable
 
         // 20 ms preroll + 30 ms WASAPI buffer (were 150/100, depois 40/50): share-tab.html provou
         // que preroll zero já é fluido, então sobra só uma guarda mínima contra engasgo.
+        // A tradução toca em 1× e só. O CatchUp que ficava aqui consumia a fila a 1,15× por
+        // interpolação linear quando ela crescia — o que SOBE O PITCH ~15% enquanto está engatado.
+        // Isso é destruir exatamente a entonação que o modelo acabou de copiar da sua voz para
+        // economizar alguns décimos de segundo. O AI Studio toca cada bloco na hora que chega, em
+        // 1×, e é esse o comportamento agora. Se a fila crescer, ela cresce: é atraso honesto.
         var mixFormat = device.AudioClient.MixFormat;
-        _catchUp = new CatchUp(_transBuf.ToSampleProvider(), _transBuf, tag);
-        ISampleProvider trans = ToDevice(new Preroll(_catchUp, _transBuf, 20), mixFormat);
+        ISampleProvider trans = ToDevice(new Preroll(_transBuf.ToSampleProvider(), _transBuf, 20), mixFormat);
         _origVolume = new VolumeSampleProvider(ToDevice(new Preroll(_origBuf.ToSampleProvider(), _origBuf, 20), mixFormat))
         { Volume = Math.Clamp(originalVolume, 0f, 1f) };
 
@@ -97,108 +97,6 @@ public sealed class AudioOut : IDisposable
         try { _output.Stop(); } catch { }
         try { _output.Dispose(); } catch { }
         try { _device.Dispose(); } catch { }
-    }
-}
-
-/// <summary>
-/// Anti-acúmulo: when continuous speech makes translated audio queue up faster than it plays
-/// out (the delay that grows over a long session), consume the source at 1.15× until the queue
-/// drains, then drop back to 1×. Plain linear interpolation — pitch rises ~15% while engaged,
-/// the same trade-off Meet makes for live catch-up.
-///
-/// Hysteresis (engage at 1 s, release at 0.4 s) keeps it from flapping on ordinary bursts.
-/// Engaging at 3 s (as before) let the queue snowball past the point 1.1× could drain it.
-///
-/// NÃO baixe para ~300 ms: foi testado (log session-20260729-123206) e engata dezenas de vezes
-/// por minuto sem ganho nenhum. O servidor entrega o dub em blocos de 250 ms, então a fila
-/// oscila entre ~100 e ~400 ms só por granularidade de bloco — medida em regime, ela fica em
-/// 36–44 ms. Não existe fila acumulada para drenar aqui; o atraso está antes da chegada.
-/// </summary>
-internal sealed class CatchUp : ISampleProvider
-{
-    private const float FastRate = 1.15f;
-    private const double EngageMs = 1000;
-    private const double ReleaseMs = 400;
-
-    private readonly ISampleProvider _src; // mono; ReadFully source, so reads always fill
-    private readonly BufferedWaveProvider _queue;
-    private readonly string _tag;
-
-    private volatile bool _fast;
-    private bool _primed;
-    private double _frac;
-    private float _p, _n;
-    private float[] _in = Array.Empty<float>();
-    private int _inLen, _inPos;
-
-    public bool Fast => _fast;
-
-    public CatchUp(ISampleProvider src, BufferedWaveProvider queue, string tag)
-    {
-        _src = src;
-        _queue = queue;
-        _tag = tag;
-    }
-
-    public WaveFormat WaveFormat => _src.WaveFormat;
-
-    public int Read(float[] buffer, int offset, int count)
-    {
-        double ms = _queue.BufferedDuration.TotalMilliseconds;
-        if (_fast && ms <= ReleaseMs)
-        {
-            _fast = false;
-            _primed = false; // drops ≤2 samples of interpolation state — inaudible
-            Log.Write(_tag, $"catch-up desligado (fila {ms:0} ms).");
-        }
-        else if (!_fast && ms >= EngageMs)
-        {
-            _fast = true;
-            Log.Write(_tag, $"catch-up ligado: tradução a {FastRate:0.00}× (fila {ms:0} ms).");
-        }
-
-        if (!_fast)
-        {
-            // Serve whatever was already pulled from the queue before returning to pass-through.
-            int served = 0;
-            while (served < count && _inPos < _inLen)
-                buffer[offset + served++] = _in[_inPos++];
-            if (served < count)
-                served += _src.Read(buffer, offset + served, count - served);
-            return served;
-        }
-
-        if (!_primed)
-        {
-            _p = NextSource();
-            _n = NextSource();
-            _frac = 0;
-            _primed = true;
-        }
-        for (int i = 0; i < count; i++)
-        {
-            buffer[offset + i] = _p + (_n - _p) * (float)_frac;
-            _frac += FastRate;
-            while (_frac >= 1.0)
-            {
-                _p = _n;
-                _n = NextSource();
-                _frac -= 1.0;
-            }
-        }
-        return count;
-    }
-
-    private float NextSource()
-    {
-        if (_inPos >= _inLen)
-        {
-            if (_in.Length == 0) _in = new float[1024];
-            _inLen = _src.Read(_in, 0, _in.Length);
-            _inPos = 0;
-            if (_inLen <= 0) return 0f; // ReadFully source shouldn't hit this; safety only
-        }
-        return _in[_inPos++];
     }
 }
 

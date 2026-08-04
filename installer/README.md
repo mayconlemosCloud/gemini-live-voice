@@ -1,6 +1,6 @@
 # Instalador (TradutorReunioes-Setup.exe)
 
-Gera um único `.exe` que instala o `GeminiTranslateLite` e deixa os drivers de
+Gera um único `.exe` que instala o `GeminiTranslateV2` e deixa os drivers de
 áudio virtual (VB-CABLE e Hi-Fi Cable ASIO Bridge) prontos para instalação
 manual — a licença do VB-CABLE proíbe rodar o instalador dele silenciosamente
 dentro de outro instalador, então o setup copia os pacotes originais (sem
@@ -22,7 +22,7 @@ modificação) e cria atalhos no menu Iniciar para o usuário rodar cada um.
 ## Build
 
 ```powershell
-dotnet publish src\GeminiTranslateLite\GeminiTranslateLite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish-lite
+dotnet publish src\GeminiTranslateV2\GeminiTranslateV2.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish-v2
 
 cd installer
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss

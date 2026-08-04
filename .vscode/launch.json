@@ -3,5 +3,33 @@
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": []
+    "configurations": [
+        {
+            "name": "Tradutor de Reunioes V2 (Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/src/GeminiTranslateV2/bin/Debug/net10.0-windows/GeminiTranslateV2.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/GeminiTranslateV2",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Tradutor de Reunioes V2 (Release)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-release",
+            "program": "${workspaceFolder}/src/GeminiTranslateV2/bin/Release/net10.0-windows/GeminiTranslateV2.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/GeminiTranslateV2",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Anexar a um processo em execucao",
+            "type": "coreclr",
+            "request": "attach"
+        }
+    ]
 }

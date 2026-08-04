@@ -28,6 +28,7 @@ public partial class OverlayWindow : Window
     public OverlayWindow(AssistantClient assistant, ConversationContext context)
     {
         InitializeComponent();
+        Stealth.Register(this);
         _assistant = assistant;
         _context = context;
         Loaded += OnLoaded;

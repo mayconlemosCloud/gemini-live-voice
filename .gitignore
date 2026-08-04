@@ -3,6 +3,6 @@ obj/
 *.user
 .vs/
 publish/
-publish-lite/
+publish-v2/
 installer/output/
 installer/vendor/

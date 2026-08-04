@@ -11,6 +11,7 @@ public partial class SuggestionWindow : Window
     public SuggestionWindow(string question)
     {
         InitializeComponent();
+        Stealth.Register(this);
         _question = question;
         QuestionText.Text = question;
         AnswerBox.Text = "Gerando sugestão…";

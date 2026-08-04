@@ -1,4 +1,4 @@
-; Instalador do Tradutor de Reuniões (GeminiTranslateLite).
+; Instalador do Tradutor de Reuniões (GeminiTranslateV2).
 ;
 ; O VB-CABLE e o Hi-Fi Cable ASIO Bridge sao redistribuidos AQUI SEM MODIFICACAO,
 ; conforme a licenca do VB-CABLE (readme.txt em vendor\VBCABLE) permite diffusion
@@ -11,7 +11,7 @@
 ; e um donationware.
 
 #define MyAppName "Tradutor de Reunioes (Gemini Live)"
-#define MyAppExeName "GeminiTranslateLite.exe"
+#define MyAppExeName "GeminiTranslateV2.exe"
 #define MyAppPublisher "Projeto Gemini Live Translate"
 #define MyAppVersion "1.0"
 
@@ -20,7 +20,7 @@ AppId={{B1B6C9B0-6E7B-4B8B-9B7B-6C6E6B6B6B6B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\GeminiTranslateLite
+DefaultDirName={autopf}\GeminiTranslateV2
 DefaultGroupName=Tradutor de Reunioes
 DisableProgramGroupPage=yes
 OutputDir=output
@@ -36,7 +36,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Files]
-Source: "..\publish-lite\GeminiTranslateLite.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\publish-v2\GeminiTranslateV2.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "vendor\VBCABLE\*"; DestDir: "{app}\Drivers\VB-CABLE"; Flags: ignoreversion recursesubdirs
 Source: "vendor\HiFiCable\*"; DestDir: "{app}\Drivers\HiFiCable"; Flags: ignoreversion recursesubdirs
 Source: "LEIA-ME.txt"; DestDir: "{app}\Drivers"; Flags: ignoreversion

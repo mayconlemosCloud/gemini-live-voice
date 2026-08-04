@@ -55,6 +55,12 @@ public sealed class Settings
     /// </summary>
     public bool MakeCablesDefault { get; set; } = true;
 
+    /// <summary>
+    /// Oculta as janelas do app de compartilhamento de tela, gravação e print (SetWindowDisplayAffinity).
+    /// Você continua vendo tudo; quem está do outro lado da chamada, não.
+    /// </summary>
+    public bool HideFromScreenShare { get; set; } = true;
+
     // ---- Assistente de respostas (usa a mesma API do Google/Gemini, camada gratuita) ----
     /// <summary>Modelo Gemini (generateContent) para sugerir respostas. Flash é gratuito e rápido.</summary>
     public string AssistantModel { get; set; } = "gemini-2.5-flash";

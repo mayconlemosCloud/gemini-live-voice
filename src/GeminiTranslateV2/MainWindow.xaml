@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Tradutor de Reuniões — V2 (captura por processo)" Width="800" Height="680"
         Background="#1E1F22" Foreground="#EAEAEA" FontSize="13"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="False">
     <Window.Resources>
         <Style TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -130,6 +130,9 @@
                     Click="OnStartStop" FontWeight="Bold"/>
             <Button x:Name="MuteButton" Content="🎙 Mic ligado" Width="120" Height="34" Margin="8,0,0,0"
                     Click="OnMuteToggle" IsEnabled="False"/>
+            <Button x:Name="StealthButton" Content="🕶 Oculto na tela" Width="150" Height="34" Margin="8,0,0,0"
+                    Click="OnStealthToggle"
+                    ToolTip="Quando ligado, as janelas do app não aparecem em compartilhamento de tela, gravação ou print (Teams, Meet, Zoom, OBS)."/>
             <TextBlock x:Name="DelayText" DockPanel.Dock="Right" Text="" Margin="14,0,0,0"
                        Foreground="#9AA0A6" ToolTip="Tradução na fila de reprodução (atraso ao vivo). ⏩ = acelerando a 1,1× para recuperar."/>
             <TextBlock x:Name="StatusText" Text="Parado" Margin="14,0,0,0" Foreground="#9AA0A6"/>

@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 title Desinstalar - Tradutor de Reunioes (Gemini Live)
 
-set "APPDIR=%LOCALAPPDATA%\Programs\GeminiTranslateLite"
+set "APPDIR=%LOCALAPPDATA%\Programs\GeminiTranslateV2"
 set "STARTMENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Tradutor de Reunioes"
 
 echo Isso vai remover o Tradutor de Reunioes deste computador.
@@ -13,7 +13,7 @@ echo.
 choice /M "Continuar com a desinstalacao"
 if errorlevel 2 exit /b 0
 
-taskkill /IM GeminiTranslateLite.exe /F >nul 2>nul
+taskkill /IM GeminiTranslateV2.exe /F >nul 2>nul
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tradutor de Reunioes.lnk'; Remove-Item -Path $p -Force -ErrorAction SilentlyContinue"
 rd /S /Q "%STARTMENU%" >nul 2>nul

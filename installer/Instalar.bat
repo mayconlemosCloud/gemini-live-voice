@@ -3,7 +3,7 @@ setlocal EnableExtensions
 title Instalar - Tradutor de Reunioes (Gemini Live)
 
 set "SRC=%~dp0"
-set "APPDIR=%LOCALAPPDATA%\Programs\GeminiTranslateLite"
+set "APPDIR=%LOCALAPPDATA%\Programs\GeminiTranslateV2"
 set "STARTMENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Tradutor de Reunioes"
 
 echo ============================================
@@ -11,8 +11,8 @@ echo  Instalando o Tradutor de Reunioes (Gemini)
 echo ============================================
 echo.
 
-if not exist "%SRC%GeminiTranslateLite.exe" (
-    echo [ERRO] GeminiTranslateLite.exe nao foi encontrado em:
+if not exist "%SRC%GeminiTranslateV2.exe" (
+    echo [ERRO] GeminiTranslateV2.exe nao foi encontrado em:
     echo   %SRC%
     echo Rode este script de dentro da pasta extraida do instalador
     echo ^(nao de dentro do .zip^).
@@ -45,8 +45,8 @@ mkdir "%STARTMENU%" >nul 2>nul
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$w=New-Object -ComObject WScript.Shell;" ^
   "$desktop=[Environment]::GetFolderPath('Desktop');" ^
-  "$s=$w.CreateShortcut('%STARTMENU%\Tradutor de Reunioes.lnk'); $s.TargetPath='%APPDIR%\GeminiTranslateLite.exe'; $s.WorkingDirectory='%APPDIR%'; $s.Save();" ^
-  "$s=$w.CreateShortcut((Join-Path $desktop 'Tradutor de Reunioes.lnk')); $s.TargetPath='%APPDIR%\GeminiTranslateLite.exe'; $s.WorkingDirectory='%APPDIR%'; $s.Save();" ^
+  "$s=$w.CreateShortcut('%STARTMENU%\Tradutor de Reunioes.lnk'); $s.TargetPath='%APPDIR%\GeminiTranslateV2.exe'; $s.WorkingDirectory='%APPDIR%'; $s.Save();" ^
+  "$s=$w.CreateShortcut((Join-Path $desktop 'Tradutor de Reunioes.lnk')); $s.TargetPath='%APPDIR%\GeminiTranslateV2.exe'; $s.WorkingDirectory='%APPDIR%'; $s.Save();" ^
   "if (Test-Path '%APPDIR%\Drivers\VB-CABLE\VBCABLE_Setup_x64.exe') { $s=$w.CreateShortcut('%STARTMENU%\1 - Instalar VB-CABLE.lnk'); $s.TargetPath='%APPDIR%\Drivers\VB-CABLE\VBCABLE_Setup_x64.exe'; $s.Save() };" ^
   "if (Test-Path '%APPDIR%\Drivers\HiFiCable\HiFiCableAsioBridgeSetup.exe') { $s=$w.CreateShortcut('%STARTMENU%\2 - Instalar Hi-Fi Cable ASIO Bridge.lnk'); $s.TargetPath='%APPDIR%\Drivers\HiFiCable\HiFiCableAsioBridgeSetup.exe'; $s.Save() };" ^
   "$s=$w.CreateShortcut('%STARTMENU%\Pasta dos instaladores de audio.lnk'); $s.TargetPath='%APPDIR%\Drivers'; $s.Save();" ^
@@ -71,6 +71,6 @@ echo.
 pause
 
 if exist "%APPDIR%\Drivers" start "" "%APPDIR%\Drivers"
-start "" "%APPDIR%\GeminiTranslateLite.exe"
+start "" "%APPDIR%\GeminiTranslateV2.exe"
 
 endlocal

@@ -5,8 +5,8 @@ using NAudio.Wave.SampleProviders;
 namespace GeminiTranslateV2;
 
 /// <summary>
-/// Real microphone capture at its native rate, mono PCM16, ~100 ms chunks. No local silence
-/// gate — every chunk is forwarded; the server's automaticActivityDetection decides turns
+/// Real microphone capture at its native rate, mono PCM16, 100 ms chunks. No local silence
+/// gate — every chunk is forwarded; the model segments turns itself from the continuous stream
 /// (see LiveClient). Turn the mic's own noise suppression / echo cancellation on in Windows
 /// Settings (System → Sound → your microphone → "Enhance audio") — that's what actually cleans
 /// the signal, not anything this class does.
@@ -44,7 +44,10 @@ public sealed class MicCapture : IAudioSource
         ISampleProvider sp = _buffer.ToSampleProvider();
         if (sp.WaveFormat.Channels > 1) sp = new FirstChannel(sp); // channel 0 only — no comb filtering across capsules
         SampleRate = sp.WaveFormat.SampleRate;
-        _chunkBytes = SampleRate / 25 * 2; // 40 ms mono PCM16 (era 100 ms — cada chunk é atraso puro)
+        // 100 ms mono PCM16 — o tamanho que a doc do live-translate especifica ("send audio in
+        // chunks of 100ms"). Já esteve em 40 ms para cortar atraso; voltou porque o modelo analisa
+        // prosódia por bloco e 40 ms é curto demais para conter o contorno de uma sílaba inteira.
+        _chunkBytes = SampleRate / 10 * 2;
         _outMono = new SampleToWaveProvider16(sp);
 
         Log.Write("Mic", $"captura em '{device.FriendlyName}' ({_capture.WaveFormat.SampleRate} Hz " +
