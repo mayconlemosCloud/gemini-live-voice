@@ -92,6 +92,9 @@
             <CheckBox x:Name="MakeDefaultCheck" Content="Tornar os cabos padrão do Windows ao iniciar (restaura ao parar)"
                       VerticalAlignment="Center" Margin="0,6,0,0"
                       ToolTip="Aponta a saída padrão do Windows para o cabo escutado e a entrada padrão para o cabo do microfone virtual — assim Teams/WhatsApp já pegam o áudio certo sem configuração."/>
+            <CheckBox x:Name="CatchUpCheck" Content="Acelerar a tradução para recuperar atraso (até 1,12×, sem mudar a voz)"
+                      VerticalAlignment="Center" Margin="0,6,0,0"
+                      ToolTip="Quando a tradução se acumula na fila, toca um pouco mais rápido até zerar, preservando o tom da voz. Só recupera o que está na fila (décimos de segundo) — não encurta o tempo que o modelo leva para responder."/>
             <TextBlock x:Name="DefaultDevicesText" Text="" Margin="22,2,0,0" Foreground="#9AA0A6" TextWrapping="Wrap"/>
         </StackPanel>
 
@@ -133,8 +136,14 @@
             <Button x:Name="StealthButton" Content="🕶 Oculto na tela" Width="150" Height="34" Margin="8,0,0,0"
                     Click="OnStealthToggle"
                     ToolTip="Quando ligado, as janelas do app não aparecem em compartilhamento de tela, gravação ou print (Teams, Meet, Zoom, OBS)."/>
-            <TextBlock x:Name="DelayText" DockPanel.Dock="Right" Text="" Margin="14,0,0,0"
-                       Foreground="#9AA0A6" ToolTip="Tradução na fila de reprodução (atraso ao vivo). ⏩ = acelerando a 1,1× para recuperar."/>
+            <StackPanel x:Name="DelayPanel" DockPanel.Dock="Right" Orientation="Horizontal"
+                        Margin="14,0,0,0" Visibility="Collapsed"
+                        ToolTip="Atraso da fala até sair traduzida no fone, por direção. Verde até 2,5 s, amarelo até 4 s, vermelho acima; cinza = última medição, já antiga. '—' = ainda sem medida. ⏩ = acelerando para recuperar fila. Quanto já saiu de cada fala fica na etiqueta flutuante, que continua visível com esta janela minimizada.">
+                <TextBlock Text="⏱" Foreground="#9AA0A6" Margin="0,0,8,0"/>
+                <TextBlock x:Name="DelayOutText" Text="você —"/>
+                <TextBlock Text="·" Foreground="#5A5D62" Margin="8,0"/>
+                <TextBlock x:Name="DelayInText" Text="eles —"/>
+            </StackPanel>
             <TextBlock x:Name="StatusText" Text="Parado" Margin="14,0,0,0" Foreground="#9AA0A6"/>
         </DockPanel>
     </Grid>

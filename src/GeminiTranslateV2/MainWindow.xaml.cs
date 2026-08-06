@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private QuestionTranscript? _questionTranscript;
     private readonly ConversationContext _context = new();
     private OverlayWindow? _overlay;
+    private BalanceWindow? _balance;
     private DefaultDeviceScope? _defaultDevices;
     private bool Running => _incoming is not null;
 
@@ -119,12 +120,15 @@ public partial class MainWindow : Window
     {
         if (_incoming is null || _outgoing is null)
         {
-            DelayText.Text = "";
+            DelayPanel.Visibility = Visibility.Collapsed;
             return;
         }
-        static string Part(string name, Direction d) =>
-            $"{name} {d.TranslationQueue.TotalSeconds:0.0}s";
-        DelayText.Text = $"fila: {Part("entrada", _incoming)} · {Part("saída", _outgoing)}";
+
+        DelayPanel.Visibility = Visibility.Visible;
+
+        // Ordem: primeiro a direção que o usuário mais sente (a própria fala saindo traduzida).
+        (DelayOutText.Text, DelayOutText.Foreground) = LagFormat.Describe("você", _outgoing);
+        (DelayInText.Text, DelayInText.Foreground) = LagFormat.Describe("eles", _incoming);
     }
 
     // ---------- devices / processes / settings ----------
@@ -175,6 +179,7 @@ public partial class MainWindow : Window
         ApiKeyBox.Password = _settings.ApiKey;
         AssistantEnabledCheck.IsChecked = _settings.AssistantEnabled;
         MakeDefaultCheck.IsChecked = _settings.MakeCablesDefault;
+        CatchUpCheck.IsChecked = _settings.CatchUpEnabled;
         AssistantContextBox.Text = _settings.AssistantContext;
         MyLangCombo.ItemsSource = Languages.All;
         TheirLangCombo.ItemsSource = Languages.All;
@@ -200,6 +205,7 @@ public partial class MainWindow : Window
         _settings.ApiKey = ApiKeyBox.Password;
         _settings.AssistantEnabled = AssistantEnabledCheck.IsChecked == true;
         _settings.MakeCablesDefault = MakeDefaultCheck.IsChecked == true;
+        _settings.CatchUpEnabled = CatchUpCheck.IsChecked == true;
         _settings.AssistantContext = AssistantContextBox.Text;
         _settings.HeadphonesDeviceId = IdOf(HeadphonesCombo);
         _settings.MicDeviceId = IdOf(MicCombo);
@@ -280,12 +286,14 @@ public partial class MainWindow : Window
 
             _incoming = new Direction("Entrada",
                 entradaSource, Dev(_settings.HeadphonesDeviceId!),
-                _settings.ApiKey, _settings.Model, _settings.MyLang, (float)_settings.OriginalVolume);
+                _settings.ApiKey, _settings.Model, _settings.MyLang, (float)_settings.OriginalVolume,
+                _settings.CatchUpEnabled);
             WireIncoming(_incoming);
 
             _outgoing = new Direction("Saída",
                 new MicCapture(Dev(_settings.MicDeviceId!)), Dev(_settings.VirtualMicDeviceId!),
-                _settings.ApiKey, _settings.Model, _settings.TheirLang, (float)_settings.OriginalVolume);
+                _settings.ApiKey, _settings.Model, _settings.TheirLang, (float)_settings.OriginalVolume,
+                _settings.CatchUpEnabled);
             Wire(_outgoing, OutgoingBox);
 
             // Full conversation log: one stereo .wav (esq = o que você ouviu, dir = o que eles
@@ -302,6 +310,13 @@ public partial class MainWindow : Window
 
             await _incoming.StartAsync();
             await _outgoing.StartAsync();
+
+            // Etiqueta de saldo sempre-no-topo. Independe do assistente: a janela principal fica
+            // minimizada durante a chamada, e é justamente aí que se quer saber o que falta sair.
+            _balance = new BalanceWindow(_settings);
+            _balance.Closed += (_, _) => _balance = null;
+            _balance.Show();
+            _balance.Bind(_outgoing, _incoming);
 
             IncomingHeader.Text = $"{entradaLabel} → você ouve em {Languages.ByCode(_settings.MyLang).Name}";
             OutgoingHeader.Text = $"Você → eles ouvem em {Languages.ByCode(_settings.TheirLang).Name}";
@@ -470,6 +485,7 @@ public partial class MainWindow : Window
     private void StopAll()
     {
         try { _overlay?.Close(); } catch { }
+        try { _balance?.Close(); } catch { }
         try { _incoming?.Dispose(); } catch { }
         try { _outgoing?.Dispose(); } catch { }
         try { _recorder?.Dispose(); } catch { }
@@ -479,6 +495,7 @@ public partial class MainWindow : Window
         try { _defaultDevices?.Dispose(); } catch (Exception ex) { Log.Write("Padrão", "falha ao restaurar: " + ex); }
         _defaultDevices = null;
         _overlay = null;
+        _balance = null;
         _incoming = _outgoing = null;
         _recorder = null;
         _transcript = null;
@@ -492,7 +509,8 @@ public partial class MainWindow : Window
         MuteButton.IsEnabled = running;
         MuteButton.Content = "🎙 Mic ligado";
         foreach (var c in new Control[] { SourceCombo, RefreshSourcesButton, HeadphonesCombo, MicCombo, VirtualMicCombo,
-                 MyLangCombo, TheirLangCombo, ApiKeyBox, AssistantEnabledCheck, AssistantContextBox, MakeDefaultCheck })
+                 MyLangCombo, TheirLangCombo, ApiKeyBox, AssistantEnabledCheck, AssistantContextBox, MakeDefaultCheck,
+                 CatchUpCheck })
             c.IsEnabled = !running;
         if (!running) DefaultDevicesText.Text = "";
     }

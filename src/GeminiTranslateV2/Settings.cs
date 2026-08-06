@@ -50,6 +50,17 @@ public sealed class Settings
     public double OriginalVolume { get; set; } = 0.20;
 
     /// <summary>
+    /// Recuperar atraso acelerando a tradução até 1,12× quando ela se acumula na fila, sem alterar
+    /// o pitch (WSOLA — ver TimeStretch). Ganho limitado por natureza: só alcança o que está na
+    /// fila de reprodução (90–330 ms medidos), nunca o tempo que o modelo leva para responder.
+    /// </summary>
+    public bool CatchUpEnabled { get; set; } = true;
+
+    /// <summary>Onde o usuário largou a etiqueta flutuante de atraso. null = canto inferior direito.</summary>
+    public double? LagLeft { get; set; }
+    public double? LagTop { get; set; }
+
+    /// <summary>
     /// Ao iniciar, torna os cabos virtuais os dispositivos padrão do Windows (e restaura ao parar),
     /// para não precisar configurar entrada/saída dentro do Teams, WhatsApp, Meet...
     /// </summary>

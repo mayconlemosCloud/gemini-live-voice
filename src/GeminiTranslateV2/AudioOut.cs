@@ -17,11 +17,31 @@ public sealed class AudioOut : IDisposable
     private readonly BufferedWaveProvider _transBuf;
     private readonly BufferedWaveProvider _origBuf;
     private readonly VolumeSampleProvider _origVolume;
+    private readonly TimeStretch? _catchUp;
     private volatile Action<float[], int, int>? _renderTap;
     private bool _disposed;
 
+    /// <summary>
+    /// Abaixo desta fila a reprodução é 1× exato. Não é zero de propósito: a fila oscila
+    /// naturalmente entre 90 e 330 ms (medido), e acelerar nessa faixa só a esvaziaria para
+    /// depois faltar áudio — trocaria atraso por engasgo.
+    /// </summary>
+    private const double CatchUpFloorMs = 350;
+
+    /// <summary>Fila a partir da qual já se acelera no máximo.</summary>
+    private const double CatchUpFullMs = 900;
+
+    /// <summary>
+    /// Teto de velocidade. 1,12× é o limite em que o WSOLA continua inaudível em fala; acima
+    /// disso as emendas começam a aparecer como uma leve "gagueira" nas vogais longas.
+    /// </summary>
+    private const double CatchUpMaxSpeed = 1.12;
+
     /// <summary>Translated audio waiting to be played — the live delay the listener hears.</summary>
     public TimeSpan TranslationQueue => _transBuf.BufferedDuration;
+
+    /// <summary>Velocidade de reprodução da tradução agora (1,0 = normal). Para o indicador da UI.</summary>
+    public double CatchUpSpeed => _catchUp?.Speed ?? 1.0;
 
     /// <summary>Format of the final mixed stream (IEEE float, device mix rate/channels).</summary>
     public WaveFormat MixFormat { get; }
@@ -43,7 +63,7 @@ public sealed class AudioOut : IDisposable
         set => _origVolume.Volume = Math.Clamp(value, 0f, 1f);
     }
 
-    public AudioOut(MMDevice device, int originalRate, float originalVolume, string tag)
+    public AudioOut(MMDevice device, int originalRate, float originalVolume, bool catchUp, string tag)
     {
         _device = device;
         _transBuf = new BufferedWaveProvider(new WaveFormat(24000, 16, 1))
@@ -53,13 +73,21 @@ public sealed class AudioOut : IDisposable
 
         // 20 ms preroll + 30 ms WASAPI buffer (were 150/100, depois 40/50): share-tab.html provou
         // que preroll zero já é fluido, então sobra só uma guarda mínima contra engasgo.
-        // A tradução toca em 1× e só. O CatchUp que ficava aqui consumia a fila a 1,15× por
-        // interpolação linear quando ela crescia — o que SOBE O PITCH ~15% enquanto está engatado.
-        // Isso é destruir exatamente a entonação que o modelo acabou de copiar da sua voz para
-        // economizar alguns décimos de segundo. O AI Studio toca cada bloco na hora que chega, em
-        // 1×, e é esse o comportamento agora. Se a fila crescer, ela cresce: é atraso honesto.
+        //
+        // A recuperação de fila voltou, mas por WSOLA (ver TimeStretch), não pela interpolação
+        // linear do CatchUp original — aquela subia o pitch na mesma proporção da velocidade e
+        // apagava a entonação que o modelo tinha acabado de copiar da voz. O WSOLA preserva a
+        // fundamental, e em 1× a saída é bit a bit igual à entrada, então fica sempre no caminho.
+        // O ganho é limitado por natureza: o servidor devolve o dub a ~1,02× do tempo real, então
+        // só existe para recuperar os 90–330 ms que ficam na fila. O atraso grande é a montante.
         var mixFormat = device.AudioClient.MixFormat;
-        ISampleProvider trans = ToDevice(new Preroll(_transBuf.ToSampleProvider(), _transBuf, 20), mixFormat);
+        ISampleProvider transSrc = _transBuf.ToSampleProvider();
+        if (catchUp)
+        {
+            _catchUp = new TimeStretch(transSrc, CatchUpTarget);
+            transSrc = _catchUp;
+        }
+        ISampleProvider trans = ToDevice(new Preroll(transSrc, _transBuf, 20), mixFormat);
         _origVolume = new VolumeSampleProvider(ToDevice(new Preroll(_origBuf.ToSampleProvider(), _origBuf, 20), mixFormat))
         { Volume = Math.Clamp(originalVolume, 0f, 1f) };
 
@@ -68,6 +96,19 @@ public sealed class AudioOut : IDisposable
         _output = new WasapiOut(device, AudioClientShareMode.Shared, true, 30);
         _output.Init(new SampleToWaveProvider(new TapSampleProvider(mix, () => _renderTap)));
         Log.Write(tag, $"saída em '{device.FriendlyName}' ({mixFormat.SampleRate} Hz {mixFormat.Channels} ch), original a {originalVolume:P0}.");
+    }
+
+    /// <summary>
+    /// Velocidade desejada em função da fila. Rampa linear entre <see cref="CatchUpFloorMs"/> e
+    /// <see cref="CatchUpFullMs"/> — o TimeStretch ainda suaviza a chegada até este alvo, então
+    /// quem escuta não percebe a transição, só que a fila para de crescer.
+    /// </summary>
+    private double CatchUpTarget()
+    {
+        double q = _transBuf.BufferedDuration.TotalMilliseconds;
+        if (q <= CatchUpFloorMs) return 1.0;
+        double t = Math.Min(1.0, (q - CatchUpFloorMs) / (CatchUpFullMs - CatchUpFloorMs));
+        return 1.0 + t * (CatchUpMaxSpeed - 1.0);
     }
 
     private static ISampleProvider ToDevice(ISampleProvider sp, WaveFormat mix)
