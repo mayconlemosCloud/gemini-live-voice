@@ -12,9 +12,14 @@ public sealed class ConversationContext
 {
     private const int MaxChars = 4000;
 
+    /// <summary>Depois disso a última pergunta é considerada velha demais para ser "a pergunta atual".</summary>
+    private static readonly TimeSpan QuestionFreshness = TimeSpan.FromMinutes(3);
+
     private readonly object _lock = new();
     private readonly StringBuilder _sb = new();
     private string? _lastSpeaker;
+    private string? _lastQuestion;
+    private DateTime _lastQuestionAt;
 
     public void Add(string speaker, string fragment)
     {
@@ -35,7 +40,33 @@ public sealed class ConversationContext
 
     public void Clear()
     {
-        lock (_lock) { _sb.Clear(); _lastSpeaker = null; }
+        lock (_lock) { _sb.Clear(); _lastSpeaker = null; _lastQuestion = null; }
+    }
+
+    /// <summary>Registra a última pergunta detectada na fala da outra pessoa.</summary>
+    public void NoteQuestion(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question)) return;
+        lock (_lock)
+        {
+            _lastQuestion = question.Trim();
+            _lastQuestionAt = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// A última pergunta, se ainda for recente o bastante para ser "a pergunta do momento".
+    /// Uma pergunta de 10 minutos atrás já foi respondida — não vale mais a pena responder.
+    /// </summary>
+    public string? RecentQuestion
+    {
+        get
+        {
+            lock (_lock)
+                return _lastQuestion is not null && DateTime.UtcNow - _lastQuestionAt <= QuestionFreshness
+                    ? _lastQuestion
+                    : null;
+        }
     }
 
     /// <summary>Retorna os últimos <paramref name="maxChars"/> caracteres da conversa.</summary>

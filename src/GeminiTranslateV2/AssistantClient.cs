@@ -23,21 +23,37 @@ public sealed class AssistantClient(string apiKey, string model, string persona)
         ? "\n\nSobre o usuário (para personalizar): " + _persona
         : "";
 
-    /// <summary>Sugere resposta a UMA pergunta específica (ex.: trecho clicado/selecionado).</summary>
+    /// <summary>
+    /// Sugere resposta a UMA pergunta específica (trecho clicado, ou a última pergunta detectada).
+    /// A pergunta sozinha costuma ser ambígua ("e isso aí?", "quanto tempo leva?") — o modelo recebe
+    /// a transcrição dos dois lados para entender do que se trata, mas responde SÓ essa pergunta.
+    /// </summary>
     public Task<string> SuggestAnswerAsync(string question, string context, CancellationToken ct)
     {
         var system =
             "Você ajuda o usuário durante uma conversa/reunião ao vivo. A outra pessoa fez uma " +
-            "pergunta ao usuário. Sugira uma resposta objetiva, completa e natural, em português do " +
-            "Brasil, que o usuário possa simplesmente falar. Se for técnica, responda de forma correta " +
-            "e direta ao ponto. Termine o raciocínio (não deixe pela metade). Responda APENAS com a " +
-            "sugestão de resposta, sem preâmbulo, sem aspas." + PersonaLine;
+            "pergunta ao usuário.\n\n" +
+            "A transcrição é automática e vem de tradução ao vivo: pode ter erros, cortes e frases " +
+            "soltas. Rótulos: 'Eles' = a outra pessoa, 'Você' = o usuário.\n\n" +
+            "Regras:\n" +
+            "1. Use TODA a transcrição para entender do que a pergunta trata — resolva pronomes e " +
+            "referências implícitas ('isso', 'ele', 'esse prazo', 'lá') pelo assunto da conversa.\n" +
+            "2. Responda APENAS à pergunta indicada abaixo como a pergunta atual. Não responda " +
+            "perguntas anteriores, não resuma a conversa, não liste opções.\n" +
+            "3. Se, mesmo com o contexto, a pergunta continuar ambígua, adote a interpretação mais " +
+            "provável e responda a ela (sem avisar que assumiu algo).\n" +
+            "4. A resposta deve ser objetiva, completa e natural, em português do Brasil, pronta para " +
+            "o usuário simplesmente falar. Se for técnica, seja correto e direto ao ponto. Termine o " +
+            "raciocínio (não deixe pela metade).\n" +
+            "5. Responda APENAS com a sugestão de resposta: sem preâmbulo, sem aspas, sem explicar o " +
+            "contexto." + PersonaLine;
 
         var user = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(context))
-            user.Append("Contexto recente da conversa:\n").Append(context.Trim()).Append("\n\n");
-        user.Append("Pergunta que preciso responder:\n").Append(question.Trim())
-            .Append("\n\nSugira o que eu posso responder.");
+            user.Append("Transcrição da conversa até agora (para você entender o assunto):\n")
+                .Append(context.Trim()).Append("\n\n");
+        user.Append("Pergunta atual, que é a única que devo responder:\n").Append(question.Trim())
+            .Append("\n\nSugira o que eu posso responder a essa pergunta.");
 
         return CallAsync(system, TextParts(user.ToString()), ct);
     }

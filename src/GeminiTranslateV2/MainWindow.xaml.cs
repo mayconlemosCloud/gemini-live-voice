@@ -274,7 +274,8 @@ public partial class MainWindow : Window
             if (wantAssistant && haveKey)
                 _assistant = new AssistantClient(_settings.ApiKey, _settings.AssistantModel, _settings.AssistantContext);
             Log.Write("Assistente", $"configuração: marcado={wantAssistant} · chave={(haveKey ? "ok" : "vazia")} · modelo={_settings.AssistantModel} · ativo={_assistant is not null}");
-            _questionTranscript = new QuestionTranscript(IncomingBox, _assistant is null ? null : OpenSuggestion);
+            _questionTranscript = new QuestionTranscript(IncomingBox,
+                _assistant is null ? null : OpenSuggestion, _context.NoteQuestion);
 
             // Overlay flutuante com atalhos globais (só quando o assistente está ativo).
             if (_assistant is not null)
@@ -436,9 +437,15 @@ public partial class MainWindow : Window
 
     private readonly Dictionary<string, SuggestionWindow> _suggestionWindows = new();
 
-    /// <summary>Abre a janela de sugestão e busca a resposta na IA (só ao clicar — poupa custo).</summary>
+    /// <summary>
+    /// Abre a janela de sugestão e busca a resposta na IA (só ao clicar — poupa custo). O contexto
+    /// vindo do RichTextBox só tem o lado "Eles"; a conversa acumulada tem os dois lados e explica
+    /// melhor uma pergunta ambígua, então ela tem preferência.
+    /// </summary>
     private async void OpenSuggestion(string question, string context)
     {
+        if (!_context.IsEmpty) context = _context.GetRecent();
+
         if (_assistant is null)
         {
             Log.Write("Sugestão", "clique ignorado: assistente desligado (_assistant == null).");

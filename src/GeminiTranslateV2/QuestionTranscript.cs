@@ -27,13 +27,21 @@ public sealed class QuestionTranscript
     private readonly RichTextBox _box;
     private readonly Paragraph _para;
     private readonly Action<string, string>? _onQuestion;
+    private readonly Action<string>? _onQuestionDetected;
     private readonly StringBuilder _plain = new(); // texto completo já recebido (para contexto)
     private Run? _pending;                          // frase em construção, exibida ao vivo
 
-    public QuestionTranscript(RichTextBox box, Action<string, string>? onQuestion)
+    /// <param name="onQuestion">Clique numa pergunta (nulo = assistente desligado).</param>
+    /// <param name="onQuestionDetected">
+    /// Toda pergunta detectada, clicada ou não — usado para guardar "a última pergunta" e poder
+    /// respondê-la pelo overlay sem precisar clicar.
+    /// </param>
+    public QuestionTranscript(RichTextBox box, Action<string, string>? onQuestion,
+        Action<string>? onQuestionDetected = null)
     {
         _box = box;
         _onQuestion = onQuestion;
+        _onQuestionDetected = onQuestionDetected;
         _para = new Paragraph { Margin = new Thickness(0) };
         var doc = new FlowDocument(_para) { PagePadding = new Thickness(0) };
         _box.Document = doc;
@@ -87,9 +95,12 @@ public sealed class QuestionTranscript
 
     private void FinalizeSentence(Run run, string sentence)
     {
-        bool isQuestion = sentence.TrimEnd().EndsWith("?");
-        if (!isQuestion || _onQuestion is null)
+        if (!sentence.TrimEnd().EndsWith("?"))
             return; // frase comum: deixa o Run como está.
+
+        _onQuestionDetected?.Invoke(sentence.Trim());
+        if (_onQuestion is null)
+            return; // assistente desligado: nada de sublinhar/clicar.
 
         string context = _plain.ToString();
         if (context.Length > MaxContextChars)

@@ -117,12 +117,26 @@ public partial class OverlayWindow : Window
     private async void OnSuggest(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        Log.Write("Overlay", "ação: sugerir da conversa.");
         if (_context.IsEmpty)
         {
+            Log.Write("Overlay", "ação: sugerir — sem conversa acumulada.");
             ShowResult("Ainda não há conversa suficiente para sugerir. Deixe a tradução rodar um pouco.");
             return;
         }
+
+        // Se a outra pessoa acabou de perguntar algo, responder ESSA pergunta é sempre mais útil
+        // que sugerir falas genéricas — mas ela sozinha costuma ser ambígua, então vai com a
+        // conversa inteira como contexto.
+        var question = _context.RecentQuestion;
+        if (question is not null)
+        {
+            Log.Write("Overlay", $"ação: responder a última pergunta — '{question}'");
+            await RunAsync("respondendo a última pergunta…",
+                ct => _assistant.SuggestAnswerAsync(question, _context.GetRecent(), ct));
+            return;
+        }
+
+        Log.Write("Overlay", "ação: sugerir da conversa (sem pergunta recente).");
         await RunAsync("pensando na resposta…", ct => _assistant.SuggestFromConversationAsync(_context.GetRecent(), ct));
     }
 
