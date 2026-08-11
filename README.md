@@ -117,38 +117,51 @@ As configurações (incluindo a API key) ficam em
 
 ## Estrutura do código
 
+Arquitetura hexagonal (portas e adaptadores) em quatro projetos. A regra de dependência é
+aplicada pelo compilador: `Core` não referencia NAudio, HTTP nem WPF, então o acoplamento não
+pode voltar sem alguém alterar um `.csproj` de propósito.
+
 ```
-src/GeminiTranslateV2/
-  Captura de áudio
-    IAudioSource.cs            Interface comum das fontes de captura
-    MicCapture.cs              Captura do microfone real
-    LoopbackCapture.cs         Captura WASAPI loopback (áudio da reunião)
-    ProcessCapture.cs          Captura por processo (só o app da reunião)
-    ProcessLoopback.cs         Interop do loopback por processo
-    DefaultAudioDevices.cs     Resolve/enumera dispositivos WASAPI padrão
-    Resample16k.cs             Converte qualquer formato → 16 kHz mono PCM
-    InputGain.cs               Ganho/normalização do sinal de entrada
-    AudioOut.cs                Reprodução PCM 24 kHz no dispositivo escolhido
-  Gemini
-    LiveClient.cs              WebSocket BidiGenerateContent + translationConfig
-    Direction.cs               Uma direção: captura → Gemini → playback
-    AssistantClient.cs         Sugestões de resposta (assistente)
-  Contexto e histórico
-    ConversationContext.cs     Contexto corrente da conversa
-    ConversationRecorder.cs    Gravação da conversa
-    QuestionTranscript.cs      Detecção/registro de perguntas
-    TranscriptLog.cs           Log de transcrições
-  Captura de tela
-    ScreenCapture.cs           Captura de tela
-    RegionSelectForm.cs        Seleção de região (WinForms)
-  Infra
-    Settings.cs                Persistência em %AppData%
-    Log.cs                     Log em arquivo + painel
-    LatencyProbe.cs            Medição de latência
-  UI
-    MainWindow.xaml(.cs)       Janela principal
-    OverlayWindow.xaml(.cs)    Overlay sobre a reunião
-    SuggestionWindow.xaml(.cs) Janela de sugestões
+src/GeminiTranslate.Core/            núcleo — nenhuma dependência externa
+  Contracts/                         as PORTAS que a infraestrutura implementa
+    IAudioSource / IAudioSink        captura e reprodução
+    ITranslationStream               sessão de tradução ao vivo
+    IAssistant / IScreenCapture      assistente e print de tela
+    ITranslationPlatform             fábrica de tudo que depende do sistema
+    ISettingsStore / ILogSink        preferências e destino do log
+  Signal/                            matemática pura e testável
+    Pcm / AudioRates / CaptureChunk  primitivas do formato de áudio
+    InputGain                        ganho automático que nunca clipa
+    Wsola                            aceleração sem alterar o pitch
+    EnvelopeLagEstimator             atraso por correlação de envelopes
+    LatencyProbe / SpeechBalance     medição de atraso e de saldo de fala
+    CatchUpPolicy                    quando e quanto acelerar
+  Session/                           orquestração da chamada
+    TranslationSession               monta, inicia e desmonta uma sessão
+    TranslationDirection             um fluxo: captura → modelo → reprodução
+    SessionValidator                 recusa configurações que realimentam áudio
+    ConversationContext              conversa acumulada para as ações de IA
+
+src/GeminiTranslate.Infrastructure/  adaptadores
+  Wasapi/                            MicCapture, LoopbackCapture, ProcessCapture,
+                                     AudioOutput, WireResampler, TimeStretchProvider
+  Gemini/                            LiveTranslateClient, AssistantClient, QuotaGate
+  Windows/                           Stealth de captura, PolicyConfig, ScreenCapture
+  Persistence/                       SettingsStore, gravações, transcrição, log
+  WindowsTranslationPlatform.cs      implementa ITranslationPlatform
+
+src/GeminiTranslateV2/               aplicativo WPF (gera GeminiTranslateV2.exe)
+  AppServices.cs                     raiz de composição: o único `new` de infraestrutura
+  Ui/                                janelas, overlay, barra de saldo, sugestões
+  Platform/                          atalhos globais e ocultação de janela
+
+tests/GeminiTranslate.Core.Tests/    testes do núcleo, sem hardware nem rede
+```
+
+Rodar os testes:
+
+```powershell
+dotnet test
 ```
 
 ---

@@ -1,4 +1,4 @@
-<Window x:Class="GeminiTranslateV2.OverlayWindow"
+<Window x:Class="GeminiTranslate.App.Ui.OverlayWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Copiloto" Width="580" SizeToContent="Height"
@@ -11,7 +11,6 @@
             <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.5"/>
         </Border.Effect>
         <StackPanel>
-            <!-- Barra -->
             <DockPanel LastChildFill="False">
                 <TextBlock x:Name="TitleText" Text="🤖 Copiloto" FontWeight="Bold"
                            VerticalAlignment="Center" Margin="4,0,10,0" Cursor="SizeAll"
@@ -34,9 +33,6 @@
                         ToolTip="Tirar print da tela toda para a IA analisar (Ctrl+Shift+1)"/>
             </DockPanel>
 
-            <!-- Resultado -->
-            <!-- Começa aberto: o campo de pergunta mora aqui dentro, e escondê-lo até a primeira
-                 ação deixaria o chat invisível justamente para quem só quer digitar. -->
             <Border x:Name="ResultPanel" Visibility="Visible" Margin="0,8,0,0"
                     Background="#26282C" CornerRadius="6">
                 <Grid Margin="6">
@@ -56,8 +52,6 @@
                                 ToolTip="Apagar o chat do assistente (não apaga a transcrição da reunião)"/>
                     </DockPanel>
 
-                    <!-- Campo de conversa. Fica sempre visível junto do resultado: é por aqui que o
-                         usuário pergunta o que quiser, em vez de só receber sugestões automáticas. -->
                     <DockPanel Grid.Row="2" Margin="0,6,0,0">
                         <Button x:Name="SendButton" DockPanel.Dock="Right" Content="Enviar" Width="70"
                                 Height="28" Margin="6,0,0,0" Click="OnSend"

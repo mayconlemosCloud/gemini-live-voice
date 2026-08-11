@@ -1,25 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <AssemblyName>GeminiTranslateV2</AssemblyName>
-    <RootNamespace>GeminiTranslate.App</RootNamespace>
+    <RootNamespace>GeminiTranslate.Infrastructure</RootNamespace>
+    <AssemblyName>GeminiTranslate.Infrastructure</AssemblyName>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\GeminiTranslate.Core\GeminiTranslate.Core.csproj" />
-    <ProjectReference Include="..\GeminiTranslate.Infrastructure\GeminiTranslate.Infrastructure.csproj" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>
-    <Using Remove="System.Windows.Forms" />
+    <ProjectReference Include="..\GeminiTranslate.Core\GeminiTranslate.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
   </ItemGroup>
 
 </Project>

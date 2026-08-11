@@ -1,4 +1,4 @@
-<Window x:Class="GeminiTranslateV2.BalanceWindow"
+<Window x:Class="GeminiTranslate.App.Ui.BalanceWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Tradução" SizeToContent="WidthAndHeight"
@@ -12,7 +12,6 @@
             <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.5"/>
         </Border.Effect>
         <StackPanel>
-            <!-- Você → eles -->
             <StackPanel x:Name="OutRow"
                         ToolTip="Sua fala numa janela de 8 s. A parte cheia já saiu traduzida; a parte escura à direita é o que você disse e ainda não saiu. O traço é a cabeça da tradução, a borda direita é você agora.">
                 <StackPanel Orientation="Horizontal">
@@ -26,7 +25,6 @@
                 <TextBlock x:Name="OutText" Margin="32,3,0,0" Text="sem fala pendente"/>
             </StackPanel>
 
-            <!-- Eles → você -->
             <StackPanel x:Name="InRow" Margin="0,9,0,0"
                         ToolTip="A fala da outra pessoa, na mesma escala. A parte cheia já saiu traduzida no seu fone; a escura ainda está por sair.">
                 <StackPanel Orientation="Horizontal">
@@ -40,7 +38,6 @@
                 <TextBlock x:Name="InText" Margin="32,3,0,0" Text="sem fala pendente"/>
             </StackPanel>
 
-            <!-- Escala, para o tamanho do vão querer dizer alguma coisa -->
             <DockPanel Margin="32,5,0,0" Width="170" HorizontalAlignment="Left">
                 <TextBlock Text="−8 s" Foreground="#6B6E73" FontSize="10"/>
                 <TextBlock Text="agora ▲" Foreground="#6B6E73" FontSize="10"
