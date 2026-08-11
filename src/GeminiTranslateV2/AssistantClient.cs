@@ -73,6 +73,46 @@ public sealed class AssistantClient(string apiKey, string model, string persona)
         return CallAsync(system, TextParts(user), ct);
     }
 
+    /// <summary>
+    /// Uma fala do chat do assistente. <paramref name="FromUser"/> separa o que o usuário digitou
+    /// do que a IA respondeu — é o que vira o campo "role" que a API exige.
+    /// </summary>
+    public sealed record ChatTurn(bool FromUser, string Text);
+
+    /// <summary>
+    /// Pergunta livre digitada pelo usuário, com o histórico do próprio chat. Diferente dos outros
+    /// modos, aqui o usuário conduz: pode pedir esclarecimento, mudar de assunto ou continuar de
+    /// onde parou, então o histórico vai inteiro e o contexto da reunião entra só como pano de
+    /// fundo. <paramref name="history"/> deve terminar na pergunta atual.
+    /// </summary>
+    public Task<string> ChatAsync(IReadOnlyList<ChatTurn> history, string context, CancellationToken ct)
+    {
+        var system =
+            "Você é o copiloto do usuário durante uma conversa/reunião ao vivo, respondendo no chat " +
+            "lateral do app. Responda em português do Brasil, de forma objetiva, correta e completa.\n\n" +
+            "O usuário fala com VOCÊ aqui — não é a outra pessoa da reunião falando. Responda o que " +
+            "ele pedir: pode ser tirar uma dúvida, pedir uma sugestão de fala, explicar algo dito na " +
+            "reunião ou qualquer outro assunto.\n\n" +
+            "A transcrição abaixo é o que está sendo dito na reunião ('Eles' = a outra pessoa, " +
+            "'Você' = o usuário). Ela é contexto de apoio, automática e sujeita a erros: use quando " +
+            "ajudar a entender a pergunta, e ignore quando a pergunta não tiver relação com ela.\n\n" +
+            "Transcrição da reunião até agora:\n" +
+            (string.IsNullOrWhiteSpace(context) ? "(ainda vazia)" : context.Trim()) +
+            PersonaLine;
+
+        var contents = new JsonArray();
+        foreach (var turn in history)
+        {
+            contents.Add(new JsonObject
+            {
+                ["role"] = turn.FromUser ? "user" : "model",
+                ["parts"] = TextParts(turn.Text)
+            });
+        }
+
+        return CallContentsAsync(system, contents, ct);
+    }
+
     /// <summary>Analisa uma imagem (print) no contexto da conversa. Visão.</summary>
     public Task<string> AnalyzeImageAsync(byte[] png, string context, CancellationToken ct)
     {
@@ -107,21 +147,77 @@ public sealed class AssistantClient(string apiKey, string model, string persona)
     private static JsonArray TextParts(string text) =>
         new() { new JsonObject { ["text"] = text } };
 
-    private async Task<string> CallAsync(string system, JsonArray userParts, CancellationToken ct)
+    /// <summary>Um único turno de usuário — a forma dos modos de sugestão e de imagem.</summary>
+    private Task<string> CallAsync(string system, JsonArray userParts, CancellationToken ct) =>
+        CallContentsAsync(system, new JsonArray
+        {
+            new JsonObject { ["role"] = "user", ["parts"] = userParts }
+        }, ct);
+
+    private async Task<string> CallContentsAsync(string system, JsonArray contents, CancellationToken ct)
     {
+        // Uma chamada mandada DENTRO da janela de espera de um 429 anterior não tem chance de dar
+        // certo: ela volta 429 e ainda mantém o balde de quota vazio por mais tempo. Nos logs de
+        // 11/08 esse foi o padrão dominante — um 429 seguido de 4–5 recliques em 12 s, todos 429.
+        // Então aqui a chamada nem sai: falha na hora, dizendo quanto falta.
+        long wait = RemainingCooldownMs();
+        if (wait > 0)
+        {
+            Log.Write("Assistente", $"chamada barrada: limite de quota ativo por mais {wait} ms.");
+            throw new InvalidOperationException(CooldownMessage(wait));
+        }
+
+        // Uma repetição automática, e só uma: o 429 do nível gratuito é quase sempre de janela
+        // curta (~20 s) e passa sozinho. Repetir aqui transforma um erro na cara do usuário numa
+        // espera. Se depois disso ainda estourar, o limite é de verdade e o erro sobe.
+        for (var attempt = 0; ; attempt++)
+        {
+            var (status, raw, root) = await PostAsync(system, contents, ct);
+
+            if (status == 429)
+            {
+                long delay = ParseRetryDelayMs(root, raw);
+                SetCooldown(delay);
+
+                bool canRetry = attempt == 0 && delay > 0 && delay <= MaxAutoRetryMs;
+                var apiMsg = root?["error"]?["message"]?.GetValue<string>();
+                Log.Write("Assistente", $"limite de quota (429), esperar {delay} ms · " +
+                                        $"repetir automaticamente={canRetry} · api: {Trunc(apiMsg, 200)}");
+
+                if (!canRetry) throw new InvalidOperationException(CooldownMessage(delay));
+
+                try { await Task.Delay((int)delay + 500, ct); }
+                catch (OperationCanceledException) { throw new InvalidOperationException(CooldownMessage(delay)); }
+                ClearCooldown();
+                continue;
+            }
+
+            if (status is < 200 or >= 300)
+            {
+                var apiMsg = root?["error"]?["message"]?.GetValue<string>();
+                Log.Write("Assistente", "erro da API: " + (apiMsg ?? $"HTTP {status}"));
+                throw new InvalidOperationException(apiMsg ?? $"erro HTTP {status} da API do Gemini.");
+            }
+
+            return ReadAnswer(root);
+        }
+    }
+
+    private async Task<(int Status, string Raw, JsonNode? Root)> PostAsync(
+        string system, JsonArray contents, CancellationToken ct)
+    {
+        // DeepClone porque um JsonNode só pode ter um pai: numa repetição após 429 este mesmo
+        // 'contents' seria anexado a um segundo body e a montagem estouraria InvalidOperationException.
         var body = new JsonObject
         {
             ["systemInstruction"] = new JsonObject { ["parts"] = TextParts(system) },
-            ["contents"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "user", ["parts"] = userParts }
-            },
+            ["contents"] = contents.DeepClone(),
             ["generationConfig"] = BuildGenerationConfig()
         };
 
         var url = $"{BaseUrl}/{Uri.EscapeDataString(_model)}:generateContent?key={Uri.EscapeDataString(apiKey)}";
-        bool hasImage = userParts.Any(p => p?["inlineData"] is not null);
-        Log.Write("Assistente", $"POST modelo={_model} · imagem={hasImage} · partes={userParts.Count}");
+        bool hasImage = contents.Any(c => c?["parts"]?.AsArray().Any(p => p?["inlineData"] is not null) == true);
+        Log.Write("Assistente", $"POST modelo={_model} · imagem={hasImage} · turnos={contents.Count}");
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -148,13 +244,11 @@ public sealed class AssistantClient(string apiKey, string model, string persona)
         try { root = JsonNode.Parse(raw); }
         catch (Exception ex) { root = null; Log.Write("Assistente", "corpo não é JSON: " + ex.Message); }
 
-        if (status is < 200 or >= 300)
-        {
-            var apiMsg = root?["error"]?["message"]?.GetValue<string>();
-            Log.Write("Assistente", "erro da API: " + (apiMsg ?? $"HTTP {status}"));
-            throw new InvalidOperationException(apiMsg ?? $"erro HTTP {status} da API do Gemini.");
-        }
+        return (status, raw, root);
+    }
 
+    private static string ReadAnswer(JsonNode? root)
+    {
         var sb = new StringBuilder();
         if (root?["candidates"] is JsonArray candidates && candidates.Count > 0
             && candidates[0]?["content"]?["parts"] is JsonArray parts)
@@ -189,6 +283,83 @@ public sealed class AssistantClient(string apiKey, string model, string persona)
         if (_model.Contains("2.5", StringComparison.OrdinalIgnoreCase))
             cfg["thinkingConfig"] = new JsonObject { ["thinkingBudget"] = 0 };
         return cfg;
+    }
+
+    // ---- controle de quota (429) ----
+
+    /// <summary>
+    /// Até quanto tempo vale esperar sozinho antes de devolver erro. Acima disso a espera seria
+    /// pior que o erro — a resposta chegaria depois que o assunto da reunião já passou.
+    /// </summary>
+    private const long MaxAutoRetryMs = 30_000;
+
+    /// <summary>
+    /// Quando a quota volta a estar disponível (<see cref="Environment.TickCount64"/>). Estático de
+    /// propósito: o limite é da chave/projeto, não desta instância, então recriar o AssistantClient
+    /// (o que acontece a cada vez que a tradução é reiniciada) não pode zerar o que já se sabe.
+    /// </summary>
+    private static long _quotaBlockedUntil;
+
+    private static long RemainingCooldownMs()
+    {
+        long left = Interlocked.Read(ref _quotaBlockedUntil) - Environment.TickCount64;
+        return left > 0 ? left : 0;
+    }
+
+    private static void SetCooldown(long delayMs)
+    {
+        // Sem retryDelay no corpo, assume a janela típica do nível gratuito.
+        if (delayMs <= 0) delayMs = 20_000;
+        long until = Environment.TickCount64 + delayMs;
+        // Só estende, nunca encurta: dois 429 em sequência não podem abrir a porta antes da hora.
+        long current;
+        while ((current = Interlocked.Read(ref _quotaBlockedUntil)) < until)
+            if (Interlocked.CompareExchange(ref _quotaBlockedUntil, until, current) == current) break;
+    }
+
+    private static void ClearCooldown() => Interlocked.Exchange(ref _quotaBlockedUntil, 0);
+
+    private static string CooldownMessage(long delayMs)
+    {
+        int s = (int)Math.Ceiling(Math.Max(delayMs, 1000) / 1000.0);
+        return $"Limite de uso gratuito do Gemini atingido. Aguarde {s} s e tente de novo " +
+               "(reclicar agora só renova a espera).";
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex RetryInMessage =
+        new(@"retry in ([0-9]+(?:\.[0-9]+)?)s", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Quanto o servidor pediu para esperar. Vem em <c>error.details[]</c> como RetryInfo
+    /// (<c>retryDelay: "19s"</c>); quando esse campo não vem, a mesma informação aparece em texto
+    /// no fim da mensagem ("Please retry in 19.835657224s."). Lê os dois.
+    /// </summary>
+    private static long ParseRetryDelayMs(JsonNode? root, string raw)
+    {
+        try
+        {
+            if (root?["error"]?["details"] is JsonArray details)
+            {
+                foreach (var d in details)
+                {
+                    var value = d?["retryDelay"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(value)) continue;
+                    if (double.TryParse(value!.TrimEnd('s', 'S'),
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var secs))
+                        return (long)(secs * 1000);
+                }
+            }
+        }
+        catch { /* corpo fora do formato esperado; cai no texto abaixo */ }
+
+        var m = RetryInMessage.Match(raw);
+        if (m.Success && double.TryParse(m.Groups[1].Value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var fromText))
+            return (long)(fromText * 1000);
+
+        return 0;
     }
 
     private static string Trunc(string? s, int max)

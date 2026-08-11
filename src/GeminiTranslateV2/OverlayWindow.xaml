@@ -35,19 +35,38 @@
             </DockPanel>
 
             <!-- Resultado -->
-            <Border x:Name="ResultPanel" Visibility="Collapsed" Margin="0,8,0,0"
+            <!-- Começa aberto: o campo de pergunta mora aqui dentro, e escondê-lo até a primeira
+                 ação deixaria o chat invisível justamente para quem só quer digitar. -->
+            <Border x:Name="ResultPanel" Visibility="Visible" Margin="0,8,0,0"
                     Background="#26282C" CornerRadius="6">
                 <Grid Margin="6">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <TextBox x:Name="ResultBox" Grid.Row="0" IsReadOnly="True" TextWrapping="Wrap"
-                             MinHeight="120" MaxHeight="260" VerticalScrollBarVisibility="Auto"
+                             MinHeight="60" MaxHeight="260" VerticalScrollBarVisibility="Auto"
                              Background="Transparent" Foreground="#EAEAEA" BorderThickness="0"/>
                     <DockPanel Grid.Row="1" Margin="0,6,0,0">
                         <Button x:Name="CopyButton" DockPanel.Dock="Right" Content="Copiar" Width="80"
-                                Height="26" Click="OnCopy"/>
+                                Height="26" Click="OnCopy" ToolTip="Copiar todo o chat"/>
+                        <Button x:Name="ClearButton" DockPanel.Dock="Right" Content="🧹 Limpar" Width="80"
+                                Height="26" Margin="0,0,6,0" Click="OnClearChat"
+                                ToolTip="Apagar o chat do assistente (não apaga a transcrição da reunião)"/>
+                    </DockPanel>
+
+                    <!-- Campo de conversa. Fica sempre visível junto do resultado: é por aqui que o
+                         usuário pergunta o que quiser, em vez de só receber sugestões automáticas. -->
+                    <DockPanel Grid.Row="2" Margin="0,6,0,0">
+                        <Button x:Name="SendButton" DockPanel.Dock="Right" Content="Enviar" Width="70"
+                                Height="28" Margin="6,0,0,0" Click="OnSend"
+                                ToolTip="Enviar a pergunta para o assistente (Enter)"/>
+                        <TextBox x:Name="InputBox" Height="28" VerticalContentAlignment="Center"
+                                 Background="#1E1F22" Foreground="#EAEAEA" CaretBrush="#EAEAEA"
+                                 BorderBrush="#3A3D42" BorderThickness="1" Padding="6,0"
+                                 KeyDown="OnInputKeyDown"
+                                 ToolTip="Pergunte qualquer coisa ao assistente · Enter envia"/>
                     </DockPanel>
                 </Grid>
             </Border>

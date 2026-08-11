@@ -25,6 +25,16 @@ public partial class OverlayWindow : Window
     private HwndSource? _source;
     private bool _busy;
 
+    /// <summary>
+    /// Chat do assistente: serve ao mesmo tempo de tela e de histórico mandado para a API. As ações
+    /// de botão (print, região, sugerir) também entram aqui, com um turno de usuário sintético
+    /// descrevendo o que foi pedido — assim o usuário pode continuar a conversa em cima do resultado
+    /// ("explica melhor", "e se eu responder X?") em vez de cada ação ser um fato isolado.
+    /// É separado do <see cref="ConversationContext"/>, que é a transcrição da reunião; limpar um
+    /// não mexe no outro.
+    /// </summary>
+    private readonly List<AssistantClient.ChatTurn> _chat = [];
+
     public OverlayWindow(AssistantClient assistant, ConversationContext context)
     {
         InitializeComponent();
@@ -82,7 +92,7 @@ public partial class OverlayWindow : Window
     {
         if (_busy) return;
         Log.Write("Overlay", "ação: print da tela.");
-        await RunAsync("analisando print…", async ct =>
+        await RunAsync("analisando print…", "(print da tela toda)", async ct =>
         {
             byte[] png = await CaptureHidingOverlay(() => ScreenCapture.CaptureFull());
             return await _assistant.AnalyzeImageAsync(png, _context.GetRecent(), ct);
@@ -107,7 +117,7 @@ public partial class OverlayWindow : Window
 
         if (region.Width <= 0) { StatusText.Text = "seleção cancelada"; return; }
 
-        await RunAsync("analisando região…", async ct =>
+        await RunAsync("analisando região…", "(print de uma região da tela)", async ct =>
         {
             byte[] png = ScreenCapture.Capture(region.X, region.Y, region.Width, region.Height);
             return await _assistant.AnalyzeImageAsync(png, _context.GetRecent(), ct);
@@ -131,13 +141,48 @@ public partial class OverlayWindow : Window
         if (question is not null)
         {
             Log.Write("Overlay", $"ação: responder a última pergunta — '{question}'");
-            await RunAsync("respondendo a última pergunta…",
+            await RunAsync("respondendo a última pergunta…", $"(o que respondo a: \"{question}\"?)",
                 ct => _assistant.SuggestAnswerAsync(question, _context.GetRecent(), ct));
             return;
         }
 
         Log.Write("Overlay", "ação: sugerir da conversa (sem pergunta recente).");
-        await RunAsync("pensando na resposta…", ct => _assistant.SuggestFromConversationAsync(_context.GetRecent(), ct));
+        await RunAsync("pensando na resposta…", "(o que eu posso responder agora?)",
+            ct => _assistant.SuggestFromConversationAsync(_context.GetRecent(), ct));
+    }
+
+    /// <summary>Pergunta livre digitada no campo de texto.</summary>
+    private async void OnSend(object sender, RoutedEventArgs e) => await SendCurrentInputAsync();
+
+    /// <summary>Enter envia; Shift+Enter continua na linha de baixo.</summary>
+    private async void OnInputKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || (Keyboard.Modifiers & ModifierKeys.Shift) != 0) return;
+        e.Handled = true;
+        await SendCurrentInputAsync();
+    }
+
+    private async Task SendCurrentInputAsync()
+    {
+        if (_busy) return;
+        var question = InputBox.Text.Trim();
+        if (question.Length == 0) return;
+
+        // Limpa o campo já: se a chamada demorar, o usuário não fica olhando a própria pergunta
+        // ainda no campo sem saber se foi ou não.
+        InputBox.Text = "";
+        Log.Write("Overlay", $"chat: pergunta do usuário ({question.Length} chars).");
+
+        await RunAsync("pensando…", question,
+            ct => _assistant.ChatAsync(_chat, _context.GetRecent(), ct));
+    }
+
+    private void OnClearChat(object sender, RoutedEventArgs e)
+    {
+        _chat.Clear();
+        ResultBox.Text = "";
+        StatusText.Text = "chat limpo";
+        Log.Write("Overlay", "chat do assistente limpo (a transcrição da reunião continua).");
     }
 
     /// <summary>Esconde o overlay, espera o repaint, captura, e reexibe.</summary>
@@ -149,34 +194,79 @@ public partial class OverlayWindow : Window
         finally { Visibility = Visibility.Visible; }
     }
 
-    private async Task RunAsync(string busyMsg, Func<CancellationToken, Task<string>> op)
+    /// <summary>
+    /// Executa uma chamada ao assistente e registra o par pergunta/resposta no chat.
+    /// <paramref name="userTurn"/> é o que aparece como fala do usuário — a pergunta digitada, ou
+    /// uma descrição da ação para os botões. Ele entra no chat ANTES da chamada, porque
+    /// <see cref="AssistantClient.ChatAsync"/> espera o histórico terminando na pergunta atual.
+    /// </summary>
+    private async Task RunAsync(string busyMsg, string userTurn, Func<CancellationToken, Task<string>> op)
     {
         _busy = true;
         SetButtonsEnabled(false);
         StatusText.Text = busyMsg;
-        ShowResult("…");
+
+        _chat.Add(new AssistantClient.ChatTurn(true, userTurn));
+        RenderChat(pending: true);
+
         try
         {
             var result = await op(CancellationToken.None);
-            ShowResult(result);
+            _chat.Add(new AssistantClient.ChatTurn(false, result));
             StatusText.Text = "pronto";
         }
         catch (Exception ex)
         {
-            ShowResult("Erro: " + ex.Message);
+            // O erro fica no chat como resposta, mas FORA do histórico mandado à API: repetir a
+            // pergunta depois não pode arrastar junto o texto de "Erro: limite atingido".
+            _chat.RemoveAt(_chat.Count - 1);
+            RenderChat();
+            AppendErrorLine(userTurn, ex.Message);
             StatusText.Text = "erro";
             Log.Write("Overlay", "falha na ação: " + ex);
+            return;
         }
         finally
         {
             _busy = false;
             SetButtonsEnabled(true);
         }
+
+        RenderChat();
     }
 
     private void SetButtonsEnabled(bool on)
     {
         ScreenButton.IsEnabled = RegionButton.IsEnabled = SuggestButton.IsEnabled = on;
+        SendButton.IsEnabled = InputBox.IsEnabled = on;
+    }
+
+    /// <summary>Redesenha o chat inteiro e rola para o fim, onde está o que acabou de chegar.</summary>
+    private void RenderChat(bool pending = false)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var turn in _chat)
+        {
+            if (sb.Length > 0) sb.Append("\n\n");
+            sb.Append(turn.FromUser ? "🧑 Você: " : "🤖 ").Append(turn.Text);
+        }
+        if (pending) sb.Append("\n\n🤖 …");
+
+        ResultBox.Text = sb.ToString();
+        ResultBox.ScrollToEnd();
+        ResultPanel.Visibility = Visibility.Visible;
+        Activate();
+    }
+
+    private void AppendErrorLine(string userTurn, string message)
+    {
+        var sb = new System.Text.StringBuilder(ResultBox.Text);
+        if (sb.Length > 0) sb.Append("\n\n");
+        sb.Append("🧑 Você: ").Append(userTurn).Append("\n\n⚠️ ").Append(message);
+        ResultBox.Text = sb.ToString();
+        ResultBox.ScrollToEnd();
+        ResultPanel.Visibility = Visibility.Visible;
+        Activate();
     }
 
     private void ShowResult(string text)

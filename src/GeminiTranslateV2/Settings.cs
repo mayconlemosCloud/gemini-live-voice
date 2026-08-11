@@ -73,8 +73,25 @@ public sealed class Settings
     public bool HideFromScreenShare { get; set; } = true;
 
     // ---- Assistente de respostas (usa a mesma API do Google/Gemini, camada gratuita) ----
-    /// <summary>Modelo Gemini (generateContent) para sugerir respostas. Flash é gratuito e rápido.</summary>
-    public string AssistantModel { get; set; } = "gemini-2.5-flash";
+    /// <summary>
+    /// Modelo Gemini (generateContent) do assistente. NÃO afeta a tradução ao vivo, que roda no
+    /// gemini-3.5-live-translate-preview e não tem limite de requisições.
+    ///
+    /// Flash-Lite e não Flash por causa da cota gratuita, que é por REQUISIÇÃO e não por token:
+    /// o 2.5-flash dá 20 pedidos por DIA (5/min), e o 3.5-flash-lite dá 500 por dia (15/min) —
+    /// 25× mais, com os mesmos 250K tokens/min. Conferido em aistudio.google.com/rate-limit em
+    /// 11/08/2026; um print e uma pergunta de texto custam exatamente 1 requisição cada.
+    /// </summary>
+    public string AssistantModel { get; set; } = DefaultAssistantModel;
+
+    public const string DefaultAssistantModel = "gemini-3.5-flash-lite";
+
+    /// <summary>
+    /// Modelos que já foram padrão e que ninguém escolheu de propósito. Quem tem um destes salvo
+    /// no settings.json está batendo no teto de 20 pedidos/dia sem saber, então a atualização leva
+    /// junto — um valor diferente destes é escolha do usuário e fica como está.
+    /// </summary>
+    private static readonly string[] SupersededAssistantModels = ["gemini-2.5-flash"];
     /// <summary>Quando ligado, perguntas da outra pessoa ficam sublinhadas e clicáveis para sugerir uma resposta.</summary>
     public bool AssistantEnabled { get; set; }
     /// <summary>Contexto opcional sobre você (cargo, tema da reunião...) para deixar as sugestões mais relevantes.</summary>
@@ -97,7 +114,18 @@ public sealed class Settings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
+            {
+                var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
+                if (SupersededAssistantModels.Contains(loaded.AssistantModel))
+                {
+                    Log.Write("Assistente",
+                        $"modelo '{loaded.AssistantModel}' substituído por '{DefaultAssistantModel}' " +
+                        "(cota gratuita 25× maior).");
+                    loaded.AssistantModel = DefaultAssistantModel;
+                    loaded.Save();
+                }
+                return loaded;
+            }
         }
         catch { }
         return new Settings();
