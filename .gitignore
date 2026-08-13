@@ -6,3 +6,4 @@ publish/
 publish-v2/
 installer/output/
 installer/vendor/
+run/

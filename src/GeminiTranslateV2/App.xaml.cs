@@ -1,4 +1,3 @@
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
 using GeminiTranslate.App.Ui;
@@ -16,17 +15,43 @@ namespace GeminiTranslate.App;
 /// </remarks>
 public partial class App : Application
 {
-    /// <summary>Instala os capturadores de exceção e registra o ambiente.</summary>
+    /// <summary>
+    /// Instala os capturadores de exceção, liga o log e registra o ambiente — nessa ordem.
+    /// </summary>
+    /// <remarks>
+    /// Os capturadores vêm PRIMEIRO de propósito. Ligar o log toca o disco e a infraestrutura, e
+    /// uma falha ali antes de eles existirem derruba o processo sem mensagem e sem registro — foi
+    /// exatamente o que aconteceu quando o carregamento do assembly de infraestrutura falhou.
+    /// Agora o app segue em pé e o erro aparece na tela, mesmo que o log não exista.
+    /// </remarks>
     public App()
     {
-        AppComposition.StartLogging();
-
         DispatcherUnhandledException += OnDispatcherException;
         AppDomain.CurrentDomain.UnhandledException += OnAppDomainException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
 
+        StartLoggingSafely();
+
         Log.Write("App", $"iniciando — v{typeof(App).Assembly.GetName().Version} · " +
                          $"{Environment.OSVersion} · .NET {Environment.Version}");
+    }
+
+    /// <summary>
+    /// Liga o log em arquivo. Sem log o app funciona; morrer por causa dele seria desproporcional.
+    /// </summary>
+    private static void StartLoggingSafely()
+    {
+        try
+        {
+            AppComposition.StartLogging();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "O registro em arquivo não pôde ser iniciado; o app continua funcionando sem ele.\n\n"
+                + ex.Message,
+                "Aviso", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     /// <summary>
@@ -53,12 +78,33 @@ public partial class App : Application
         e.SetObserved();
     }
 
-    /// <summary>Monta os adaptadores e abre a janela principal.</summary>
+    /// <summary>
+    /// Monta os adaptadores e abre a janela principal.
+    /// </summary>
+    /// <remarks>
+    /// Se a montagem falhar não há janela nenhuma para abrir, e um processo vivo e invisível é
+    /// pior que um encerramento: o usuário não vê nada, não tem o que fechar, e o app ainda
+    /// aparece no gerenciador de tarefas. Então explica o que houve e encerra.
+    /// </remarks>
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        var services = AppComposition.Create();
+        AppServices services;
+        try
+        {
+            services = AppComposition.Create();
+        }
+        catch (Exception ex)
+        {
+            Log.Write("App", "falha ao montar o aplicativo: " + ex);
+            MessageBox.Show(
+                "O aplicativo não pôde ser iniciado:\n\n" + ex.Message,
+                "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+            return;
+        }
+
         Log.Write("App", "OnStartup — abrindo janela principal.");
         new MainWindow(services).Show();
     }

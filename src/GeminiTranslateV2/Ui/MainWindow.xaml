@@ -1,143 +1,305 @@
-<Window x:Class="GeminiTranslate.App.Ui.MainWindow"
+<ui:FluentWindow x:Class="GeminiTranslate.App.Ui.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Tradutor de Reuniões — V2 (captura por processo)" Width="800" Height="680"
-        Background="#1E1F22" Foreground="#EAEAEA" FontSize="13"
-        WindowStartupLocation="CenterScreen" ShowInTaskbar="False">
-    <Window.Resources>
-        <Style TargetType="TextBlock">
-            <Setter Property="VerticalAlignment" Value="Center"/>
-        </Style>
-        <Style TargetType="ComboBox">
-            <Setter Property="Margin" Value="0,2"/>
-        </Style>
-    </Window.Resources>
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="Tradutor de Reuniões" Width="900" Height="660" MinWidth="720" MinHeight="460"
+        WindowStartupLocation="CenterScreen" ShowInTaskbar="False"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Acrylic" WindowCornerPreference="Round">
 
-    <Grid Margin="14">
+    <ui:FluentWindow.Resources>
+        <Style x:Key="FieldLabel" TargetType="ui:TextBlock">
+            <Setter Property="FontTypography" Value="Caption"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Setter Property="Margin" Value="2,0,0,4"/>
+        </Style>
+        <Style x:Key="GroupTitle" TargetType="ui:TextBlock">
+            <Setter Property="FontTypography" Value="BodyStrong"/>
+            <Setter Property="Margin" Value="2,0,0,10"/>
+        </Style>
+        <Style x:Key="Hint" TargetType="ui:TextBlock">
+            <Setter Property="FontTypography" Value="Caption"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+        </Style>
+        <Style x:Key="RailMark" TargetType="Border">
+            <Setter Property="Width" Value="3"/>
+            <Setter Property="Height" Value="18"/>
+            <Setter Property="CornerRadius" Value="2"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="-5,0,0,2"/>
+            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}"/>
+            <Setter Property="Visibility" Value="Collapsed"/>
+        </Style>
+        <Style x:Key="RailButton" TargetType="ui:Button">
+            <Setter Property="Appearance" Value="Transparent"/>
+            <Setter Property="Width" Value="54"/>
+            <Setter Property="Padding" Value="0,8"/>
+            <Setter Property="Margin" Value="0,0,0,2"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,0,0,4"/>
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,8">
-            <TextBlock Text="API key:" Width="150"/>
-            <PasswordBox x:Name="ApiKeyBox" VerticalContentAlignment="Center"/>
-        </DockPanel>
+        <ui:TitleBar Grid.Row="0" Title="Tradutor de Reuniões">
+            <ui:TitleBar.Icon>
+                <ui:SymbolIcon Symbol="Translate24"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
 
-        <Grid Grid.Row="1" Margin="0,0,0,8">
+        <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="150"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="Escutar:" Grid.Column="0"
-                       ToolTip="Um processo (captura só o áudio daquele app) ou um dispositivo/cabo (captura tudo que toca nele — aponte a saída do app de chamada para o cabo)."/>
-            <ComboBox x:Name="SourceCombo" Grid.Column="1" Margin="0,2,6,2"/>
-            <Button x:Name="RefreshSourcesButton" Content="↻" Width="28" Grid.Column="2" Click="OnRefreshSources" Margin="0,0,10,0"/>
-            <TextBlock Text="Meu fone (ouço aqui):" Grid.Column="3"/>
-            <ComboBox x:Name="HeadphonesCombo" Grid.Column="4"/>
+
+            <Border Grid.Column="0" Width="66" Padding="0,4,0,0"
+                    Background="{DynamicResource LayerFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="0,0,1,0">
+                <StackPanel HorizontalAlignment="Center">
+                    <Grid>
+                        <Border x:Name="NavLiveMark" Style="{StaticResource RailMark}"/>
+                        <ui:Button x:Name="NavLiveButton" Style="{StaticResource RailButton}"
+                                   Tag="live" Click="OnNavigate" ToolTip="A conversa ao vivo">
+                            <StackPanel>
+                                <ui:SymbolIcon Symbol="Translate24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Tradução" FontSize="10" Margin="0,4,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ui:Button>
+                    </Grid>
+
+                    <Grid>
+                        <Border x:Name="NavSetupMark" Style="{StaticResource RailMark}"/>
+                        <ui:Button x:Name="NavSetupButton" Style="{StaticResource RailButton}"
+                                   Tag="setup" Click="OnNavigate" ToolTip="Dispositivos, idiomas e conta">
+                            <StackPanel>
+                                <ui:SymbolIcon Symbol="Settings24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Configurar" FontSize="10" Margin="0,4,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ui:Button>
+                    </Grid>
+
+                    <Grid>
+                        <Border x:Name="NavAssistantMark" Style="{StaticResource RailMark}"/>
+                        <ui:Button x:Name="NavAssistantButton" Style="{StaticResource RailButton}"
+                                   Tag="assistant" Click="OnNavigate" ToolTip="Sugestões de resposta e atalhos">
+                            <StackPanel>
+                                <ui:SymbolIcon Symbol="Sparkle24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Assistente" FontSize="10" Margin="0,4,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ui:Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Column="1" Margin="16,4,16,14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Grid x:Name="LiveView" Grid.Row="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="2,0,0,8">
+                        <ui:TextBlock x:Name="IncomingHeader" Text="Nada sendo escutado"
+                                      FontTypography="BodyStrong" VerticalAlignment="Center"/>
+                        <ui:TextBlock x:Name="IncomingMeta" Text="" Margin="10,0,0,0"
+                                      FontTypography="Caption" VerticalAlignment="Center"
+                                      Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" CornerRadius="8"
+                                Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                                BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                                BorderThickness="1">
+                            <RichTextBox x:Name="IncomingBox" IsReadOnly="True" FontSize="17"
+                                         VerticalScrollBarVisibility="Auto"
+                                         Background="Transparent" BorderThickness="0" Padding="18,16"/>
+                        </Border>
+
+                        <StackPanel x:Name="MinePanel" Grid.Column="1" Width="286"
+                                    Margin="12,0,0,0" Visibility="Collapsed">
+                            <ui:TextBlock x:Name="OutgoingHeader" Text="O que eles ouvem"
+                                          Style="{StaticResource FieldLabel}"/>
+                            <Border CornerRadius="8"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource ControlElevationBorderBrush}"
+                                    BorderThickness="1">
+                                <TextBox x:Name="OutgoingBox" IsReadOnly="True" TextWrapping="Wrap"
+                                         FontSize="13" VerticalScrollBarVisibility="Auto"
+                                         Background="Transparent" BorderThickness="0" Padding="13,12"
+                                         Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <ScrollViewer x:Name="SetupView" Grid.Row="0" Visibility="Collapsed"
+                              VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                    <StackPanel>
+                        <ui:TextBlock Text="Áudio" Style="{StaticResource GroupTitle}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="12"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                <ui:TextBlock Text="Escutar" Style="{StaticResource FieldLabel}"
+                                              ToolTip="Um processo (captura só o áudio daquele app) ou um dispositivo/cabo (captura tudo que toca nele)."/>
+                                <DockPanel>
+                                    <ui:Button x:Name="RefreshSourcesButton" DockPanel.Dock="Right"
+                                               Icon="{ui:SymbolIcon ArrowSync24}" Margin="6,0,0,0"
+                                               Click="OnRefreshSources" ToolTip="Atualizar a lista"/>
+                                    <ComboBox x:Name="SourceCombo"/>
+                                </DockPanel>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                <ui:TextBlock Text="Meu fone" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="HeadphonesCombo"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="2" Grid.Column="0">
+                                <ui:TextBlock Text="Meu microfone" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="MicCombo"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="2" Grid.Column="2">
+                                <ui:TextBlock Text="Microfone virtual" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="VirtualMicCombo"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <CheckBox x:Name="MakeDefaultCheck" Margin="0,14,0,0"
+                                  Content="Assumir os cabos como padrão do Windows"
+                                  ToolTip="Teams e Meet pegam o áudio certo sozinhos. Restaurado ao parar."/>
+                        <ui:TextBlock x:Name="DefaultDevicesText" Text="" Style="{StaticResource Hint}"
+                                      Margin="28,0,0,0"/>
+
+                        <ui:TextBlock Text="Idiomas e voz" Style="{StaticResource GroupTitle}" Margin="2,24,0,10"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <ui:TextBlock Text="Eu ouço em" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="MyLangCombo"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <ui:TextBlock Text="Eles ouvem em" Style="{StaticResource FieldLabel}"/>
+                                <ComboBox x:Name="TheirLangCombo"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <ui:TextBlock Text="Voz original ao fundo" Style="{StaticResource FieldLabel}"
+                                      Margin="2,14,0,4"/>
+                        <DockPanel>
+                            <ui:TextBlock x:Name="VolumeText" DockPanel.Dock="Right" Width="52"
+                                          TextAlignment="Right" VerticalAlignment="Center"/>
+                            <Slider x:Name="VolumeSlider" Minimum="0" Maximum="0.5"
+                                    ValueChanged="OnVolumeChanged" VerticalAlignment="Center"/>
+                        </DockPanel>
+
+                        <CheckBox x:Name="CatchUpCheck" Margin="0,12,0,0"
+                                  Content="Acelerar para recuperar atraso"
+                                  ToolTip="Até 1,12×, sem alterar o tom da voz. Só recupera o que está na fila de reprodução."/>
+
+                        <ui:TextBlock Text="Conta" Style="{StaticResource GroupTitle}" Margin="2,24,0,10"/>
+                        <ui:TextBlock Text="API key do Google AI Studio" Style="{StaticResource FieldLabel}"/>
+                        <PasswordBox x:Name="ApiKeyBox" VerticalContentAlignment="Center"/>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <ScrollViewer x:Name="AssistantView" Grid.Row="0" Visibility="Collapsed"
+                              VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                    <StackPanel>
+                        <ui:TextBlock Text="Assistente de respostas" Style="{StaticResource GroupTitle}"/>
+                        <CheckBox x:Name="AssistantEnabledCheck"
+                                  Content="Sugerir respostas às perguntas"
+                                  ToolTip="Usa a mesma chave do Google já configurada."/>
+                        <ui:TextBlock Style="{StaticResource Hint}" Margin="28,0,0,0"
+                                      Text="Perguntas da outra pessoa ficam sublinhadas na tradução. Clique numa delas para ver uma sugestão."/>
+
+                        <ui:TextBlock Text="Sobre você" Style="{StaticResource FieldLabel}" Margin="2,18,0,4"/>
+                        <ui:TextBox x:Name="AssistantContextBox" MinHeight="72" TextWrapping="Wrap"
+                                    AcceptsReturn="True" VerticalContentAlignment="Top"
+                                    PlaceholderText="Cargo, tema da reunião — o que ajudar a IA a sugerir melhor"/>
+
+                        <ui:TextBlock Text="Atalhos durante a chamada" Style="{StaticResource GroupTitle}"
+                                      Margin="2,26,0,10"/>
+                        <ui:TextBlock Text="Ctrl+Shift+1  ·  analisar um print da tela" Margin="2,0,0,6"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ui:TextBlock Text="Ctrl+Shift+2  ·  analisar uma região da tela" Margin="2,0,0,6"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ui:TextBlock Text="Ctrl+Shift+3  ·  sugerir uma resposta agora" Margin="2,0,0,6"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ui:TextBlock Text="Ctrl+Shift+0  ·  mostrar ou esconder esta janela" Margin="2,0,0,6"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <DockPanel Grid.Row="1" Margin="0,14,0,0">
+                    <ui:Button x:Name="StartButton" Content="Iniciar" Icon="{ui:SymbolIcon Play24}"
+                               Appearance="Primary" MinWidth="118" Height="34" Click="OnStartStop"/>
+                    <ui:Button x:Name="MuteButton" Content="Mic ligado" Icon="{ui:SymbolIcon Mic24}"
+                               MinWidth="124" Height="34" Margin="8,0,0,0"
+                               Click="OnMuteToggle" IsEnabled="False"/>
+                    <ui:Button x:Name="ShowMineButton" Content="Ver o que eu disse"
+                               Icon="{ui:SymbolIcon Eye24}" Height="34" Margin="8,0,0,0"
+                               Click="OnToggleMine"
+                               ToolTip="Mostra ao lado a sua fala já traduzida para o idioma deles."/>
+                    <ui:Button x:Name="StealthButton" Icon="{ui:SymbolIcon EyeOff24}"
+                               Width="40" Height="34" Margin="8,0,0,0" Click="OnStealthToggle"/>
+
+                    <ui:TextBlock x:Name="StatusText" DockPanel.Dock="Right" Text="Parado"
+                                  Margin="16,0,0,0" VerticalAlignment="Center"
+                                  TextTrimming="CharacterEllipsis"
+                                  Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+
+                    <StackPanel x:Name="DelayPanel" DockPanel.Dock="Right" Orientation="Horizontal"
+                                VerticalAlignment="Center" Margin="16,0,0,0" Visibility="Collapsed"
+                                ToolTip="Atraso da fala até sair traduzida. Verde até 2,5 s, amarelo até 4 s, vermelho acima; cinza = última medição, já antiga.">
+                        <ui:SymbolIcon Symbol="Timer24" Margin="0,0,8,0"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        <ui:TextBlock x:Name="DelayOutText" Text="você —" VerticalAlignment="Center"/>
+                        <ui:TextBlock Text="·" Margin="8,0" VerticalAlignment="Center"
+                                      Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        <ui:TextBlock x:Name="DelayInText" Text="eles —" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Grid/>
+                </DockPanel>
+            </Grid>
         </Grid>
-
-        <Grid Grid.Row="2" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="Meu microfone:" Grid.Column="0"/>
-            <ComboBox x:Name="MicCombo" Grid.Column="1" Margin="0,2,10,2"/>
-            <TextBlock Text="Microfone virtual:" Grid.Column="2"/>
-            <ComboBox x:Name="VirtualMicCombo" Grid.Column="3"/>
-        </Grid>
-
-        <Grid Grid.Row="3" Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="150"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="Eu ouço em:" Grid.Column="0"/>
-            <ComboBox x:Name="MyLangCombo" Grid.Column="1" Margin="0,2,10,2"/>
-            <TextBlock Text="Eles ouvem em:" Grid.Column="2"/>
-            <ComboBox x:Name="TheirLangCombo" Grid.Column="3"/>
-        </Grid>
-
-        <DockPanel Grid.Row="4" Margin="0,0,0,10">
-            <TextBlock Text="Voz original (fundo):" Width="150"/>
-            <TextBlock x:Name="VolumeText" DockPanel.Dock="Right" Width="50" TextAlignment="Right"/>
-            <Slider x:Name="VolumeSlider" Minimum="0" Maximum="0.5"
-                    ValueChanged="OnVolumeChanged" VerticalAlignment="Center"/>
-        </DockPanel>
-
-        <StackPanel Grid.Row="5" Margin="0,0,0,8">
-            <CheckBox x:Name="AssistantEnabledCheck" Content="Sugerir respostas às perguntas (grátis, via Gemini)"
-                      VerticalAlignment="Center"
-                      ToolTip="Usa a mesma chave do Google já preenchida acima. Perguntas da outra pessoa ficam sublinhadas — clique para ver uma sugestão de resposta."/>
-            <CheckBox x:Name="MakeDefaultCheck" Content="Tornar os cabos padrão do Windows ao iniciar (restaura ao parar)"
-                      VerticalAlignment="Center" Margin="0,6,0,0"
-                      ToolTip="Aponta a saída padrão do Windows para o cabo escutado e a entrada padrão para o cabo do microfone virtual — assim Teams/WhatsApp já pegam o áudio certo sem configuração."/>
-            <CheckBox x:Name="CatchUpCheck" Content="Acelerar a tradução para recuperar atraso (até 1,12×, sem mudar a voz)"
-                      VerticalAlignment="Center" Margin="0,6,0,0"
-                      ToolTip="Quando a tradução se acumula na fila, toca um pouco mais rápido até zerar, preservando o tom da voz. Só recupera o que está na fila (décimos de segundo) — não encurta o tempo que o modelo leva para responder."/>
-            <TextBlock x:Name="DefaultDevicesText" Text="" Margin="22,2,0,0" Foreground="#9AA0A6" TextWrapping="Wrap"/>
-        </StackPanel>
-
-        <DockPanel Grid.Row="6" Margin="0,0,0,10">
-            <TextBlock Text="Sobre você (contexto):" Width="150"
-                       ToolTip="Opcional: cargo, tema da reunião, etc. Deixa as sugestões mais relevantes."/>
-            <TextBox x:Name="AssistantContextBox" VerticalContentAlignment="Center"/>
-        </DockPanel>
-
-        <Grid Grid.Row="7">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="10"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-
-            <TextBlock x:Name="IncomingHeader" Text="A outra pessoa" Grid.Row="0" Grid.Column="0" FontWeight="Bold" Margin="0,0,0,4"/>
-            <RichTextBox x:Name="IncomingBox" Grid.Row="1" Grid.Column="0" IsReadOnly="True"
-                         VerticalScrollBarVisibility="Auto"
-                         Background="#26282C" Foreground="#EAEAEA" BorderThickness="0" Padding="8"/>
-
-            <TextBlock x:Name="OutgoingHeader" Text="Você" Grid.Row="0" Grid.Column="2" FontWeight="Bold" Margin="0,0,0,4"/>
-            <TextBox x:Name="OutgoingBox" Grid.Row="1" Grid.Column="2" IsReadOnly="True"
-                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                     Background="#26282C" Foreground="#EAEAEA" BorderThickness="0" Padding="8"/>
-        </Grid>
-
-        <DockPanel Grid.Row="8" Margin="0,10,0,0">
-            <Button x:Name="StartButton" Content="▶  Iniciar" Width="120" Height="34"
-                    Click="OnStartStop" FontWeight="Bold"/>
-            <Button x:Name="MuteButton" Content="🎙 Mic ligado" Width="120" Height="34" Margin="8,0,0,0"
-                    Click="OnMuteToggle" IsEnabled="False"/>
-            <Button x:Name="StealthButton" Content="🕶 Oculto na tela" Width="150" Height="34" Margin="8,0,0,0"
-                    Click="OnStealthToggle"
-                    ToolTip="Quando ligado, as janelas do app não aparecem em compartilhamento de tela, gravação ou print (Teams, Meet, Zoom, OBS)."/>
-            <StackPanel x:Name="DelayPanel" DockPanel.Dock="Right" Orientation="Horizontal"
-                        Margin="14,0,0,0" Visibility="Collapsed"
-                        ToolTip="Atraso da fala até sair traduzida no fone, por direção. Verde até 2,5 s, amarelo até 4 s, vermelho acima; cinza = última medição, já antiga. '—' = ainda sem medida. ⏩ = acelerando para recuperar fila. Quanto já saiu de cada fala fica na etiqueta flutuante, que continua visível com esta janela minimizada.">
-                <TextBlock Text="⏱" Foreground="#9AA0A6" Margin="0,0,8,0"/>
-                <TextBlock x:Name="DelayOutText" Text="você —"/>
-                <TextBlock Text="·" Foreground="#5A5D62" Margin="8,0"/>
-                <TextBlock x:Name="DelayInText" Text="eles —"/>
-            </StackPanel>
-            <TextBlock x:Name="StatusText" Text="Parado" Margin="14,0,0,0" Foreground="#9AA0A6"/>
-        </DockPanel>
     </Grid>
-</Window>
+</ui:FluentWindow>

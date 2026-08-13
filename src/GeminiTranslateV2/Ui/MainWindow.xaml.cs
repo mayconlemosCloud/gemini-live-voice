@@ -5,6 +5,7 @@ using GeminiTranslate.App.Platform;
 using GeminiTranslate.Core.Configuration;
 using GeminiTranslate.Core.Diagnostics;
 using GeminiTranslate.Core.Session;
+using WpfUi = Wpf.Ui.Controls;
 
 namespace GeminiTranslate.App.Ui;
 
@@ -16,7 +17,7 @@ namespace GeminiTranslate.App.Ui;
 /// A mecânica da chamada mora na <see cref="TranslationSession"/>; aqui só existe interface. O
 /// mapeamento entre controles e preferências está no arquivo parcial MainWindow.Settings.cs.
 /// </remarks>
-public partial class MainWindow : Window
+public partial class MainWindow : WpfUi.FluentWindow
 {
     /// <summary>Atalho global que mostra ou esconde a janela.</summary>
     /// <remarks>
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
         LoadSources();
         ApplySettings();
 
+        ShowView(Section.Live);
         StartDelayTimer();
 
         SourceInitialized += OnSourceInitialized;
@@ -222,10 +224,15 @@ public partial class MainWindow : Window
         _balance.Bind(session.Outgoing, session.Incoming);
     }
 
+    /// <summary>Nomeia a origem no palco e descreve a direção do idioma ao lado.</summary>
     private void ShowSessionHeaders(TranslationSession session)
     {
-        IncomingHeader.Text = $"{session.IncomingLabel} → você ouve em {Languages.ByCode(_settings.MyLang).Name}";
-        OutgoingHeader.Text = $"Você → eles ouvem em {Languages.ByCode(_settings.TheirLang).Name}";
+        var mine = Languages.ByCode(_settings.MyLang).Name;
+        var theirs = Languages.ByCode(_settings.TheirLang).Name;
+
+        IncomingHeader.Text = session.IncomingLabel;
+        IncomingMeta.Text = $"{theirs} → {mine}";
+        OutgoingHeader.Text = $"O que eles ouvem · {theirs}";
         DefaultDevicesText.Text = session.DefaultDevicesNote;
     }
 
@@ -263,13 +270,80 @@ public partial class MainWindow : Window
 
     private void SetUiRunning(bool running)
     {
-        StartButton.Content = running ? "■  Parar" : "▶  Iniciar";
+        if (running) ShowView(Section.Live);
+
+        StartButton.Content = running ? "Parar" : "Iniciar";
+        StartButton.Icon = SymbolFor(running ? WpfUi.SymbolRegular.Stop24 : WpfUi.SymbolRegular.Play24);
         StatusText.Text = running ? "Traduzindo ao vivo…" : "Parado";
+
         MuteButton.IsEnabled = running;
-        MuteButton.Content = "🎙 Mic ligado";
+        ShowMicState(muted: false);
 
         foreach (var control in ConfigurationControls()) control.IsEnabled = !running;
-        if (!running) DefaultDevicesText.Text = "";
+
+        if (running) return;
+
+        DefaultDevicesText.Text = "";
+        IncomingHeader.Text = "Nada sendo escutado";
+        IncomingMeta.Text = "";
+    }
+
+    /// <summary>As três telas alcançáveis pela trilha lateral.</summary>
+    private enum Section { Live, Setup, Assistant }
+
+    private void OnNavigate(object sender, RoutedEventArgs e)
+    {
+        ShowView(((sender as FrameworkElement)?.Tag as string) switch
+        {
+            "setup" => Section.Setup,
+            "assistant" => Section.Assistant,
+            _ => Section.Live
+        });
+    }
+
+    /// <summary>
+    /// Troca a tela em exibição e marca o botão correspondente na trilha.
+    /// </summary>
+    /// <remarks>
+    /// Só uma das três aparece por vez: durante a chamada, os controles de configuração não têm
+    /// por que ocupar espaço — eles ficam desabilitados de qualquer forma.
+    /// </remarks>
+    private void ShowView(Section section)
+    {
+        LiveView.Visibility = Visible(section == Section.Live);
+        SetupView.Visibility = Visible(section == Section.Setup);
+        AssistantView.Visibility = Visible(section == Section.Assistant);
+
+        Select(NavLiveButton, NavLiveMark, section == Section.Live);
+        Select(NavSetupButton, NavSetupMark, section == Section.Setup);
+        Select(NavAssistantButton, NavAssistantMark, section == Section.Assistant);
+    }
+
+    private static Visibility Visible(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Marca a seção ativa com o realce e a barrinha de acento ao lado.</summary>
+    private static void Select(WpfUi.Button button, Border mark, bool selected)
+    {
+        button.Appearance = selected
+            ? WpfUi.ControlAppearance.Secondary
+            : WpfUi.ControlAppearance.Transparent;
+        mark.Visibility = Visible(selected);
+    }
+
+    /// <summary>
+    /// Mostra ou esconde a sua própria fala, já traduzida para o idioma da outra pessoa.
+    /// </summary>
+    /// <remarks>
+    /// Fechado por padrão: você sabe o que acabou de dizer. Serve para conferir a tradução de vez
+    /// em quando, e fechá-lo não interrompe nada — a fala continua sendo gravada na transcrição.
+    /// </remarks>
+    private void OnToggleMine(object sender, RoutedEventArgs e)
+    {
+        bool showing = MinePanel.Visibility == Visibility.Visible;
+        MinePanel.Visibility = Visible(!showing);
+
+        ShowMineButton.Content = showing ? "Ver o que eu disse" : "Ocultar o que eu disse";
+        ShowMineButton.Icon = SymbolFor(showing ? WpfUi.SymbolRegular.Eye24 : WpfUi.SymbolRegular.EyeOff24);
     }
 
     /// <summary>Controles que não podem mudar com a tradução no ar.</summary>
@@ -285,8 +359,19 @@ public partial class MainWindow : Window
         if (_session is null) return;
 
         _session.Outgoing.Muted = !_session.Outgoing.Muted;
-        MuteButton.Content = _session.Outgoing.Muted ? "🔇 Mic mudo" : "🎙 Mic ligado";
+        ShowMicState(_session.Outgoing.Muted);
     }
+
+    /// <summary>Reflete o estado do microfone no rótulo e no ícone do botão.</summary>
+    private void ShowMicState(bool muted)
+    {
+        MuteButton.Content = muted ? "Mic mudo" : "Mic ligado";
+        MuteButton.Icon = SymbolFor(muted ? WpfUi.SymbolRegular.MicOff24 : WpfUi.SymbolRegular.Mic24);
+    }
+
+    /// <summary>Atalho para montar um ícone Fluent para os botões.</summary>
+    private static WpfUi.SymbolIcon SymbolFor(WpfUi.SymbolRegular symbol) =>
+        new() { Symbol = symbol };
 
     private void OnStealthToggle(object sender, RoutedEventArgs e) => ApplyStealth(!Stealth.Enabled);
 
@@ -297,7 +382,8 @@ public partial class MainWindow : Window
         Stealth.SetHiddenFromAltTab(this, on);
         _settings.HideFromScreenShare = on;
 
-        StealthButton.Content = on ? "🕶 Oculto na tela" : "👁 Visível na tela";
+        StealthButton.Content = on ? "Oculto na tela" : "Visível na tela";
+        StealthButton.Icon = SymbolFor(on ? WpfUi.SymbolRegular.EyeOff24 : WpfUi.SymbolRegular.Eye24);
         StealthButton.ToolTip = on
             ? "Ligado: o app não aparece em compartilhamento de tela, gravação, print nem no " +
               $"Alt+Tab.\n{ShowHotkeyText} mostra/esconde esta janela. Clique para deixá-la visível."
