@@ -82,7 +82,7 @@
                         <ui:Button x:Name="NavSetupButton" Style="{StaticResource RailButton}"
                                    Tag="setup" Click="OnNavigate" ToolTip="Dispositivos, idiomas e conta">
                             <StackPanel>
-                                <ui:SymbolIcon Symbol="Settings24" HorizontalAlignment="Center"/>
+                                <ui:SymbolIcon Symbol="Options24" HorizontalAlignment="Center"/>
                                 <TextBlock Text="Configurar" FontSize="10" Margin="0,4,0,0"
                                            HorizontalAlignment="Center"/>
                             </StackPanel>
@@ -94,7 +94,7 @@
                         <ui:Button x:Name="NavAssistantButton" Style="{StaticResource RailButton}"
                                    Tag="assistant" Click="OnNavigate" ToolTip="Sugestões de resposta e atalhos">
                             <StackPanel>
-                                <ui:SymbolIcon Symbol="Sparkle24" HorizontalAlignment="Center"/>
+                                <ui:SymbolIcon Symbol="SparkleCircle24" HorizontalAlignment="Center"/>
                                 <TextBlock Text="Assistente" FontSize="10" Margin="0,4,0,0"
                                            HorizontalAlignment="Center"/>
                             </StackPanel>
@@ -234,42 +234,88 @@
                                   Content="Acelerar para recuperar atraso"
                                   ToolTip="Até 1,12×, sem alterar o tom da voz. Só recupera o que está na fila de reprodução."/>
 
+                        <ui:TextBlock Text="Assistente" Style="{StaticResource GroupTitle}" Margin="2,24,0,10"/>
+                        <CheckBox x:Name="AssistantEnabledCheck"
+                                  Content="Sugerir respostas às perguntas"
+                                  ToolTip="Usa a mesma chave do Google já configurada."/>
+                        <ui:TextBlock Style="{StaticResource Hint}" Margin="28,0,0,0"
+                                      Text="Perguntas da outra pessoa ficam sublinhadas na tradução. Clique numa delas para ver uma sugestão."/>
+                        <ui:TextBlock Text="Sobre você" Style="{StaticResource FieldLabel}" Margin="2,10,0,4"/>
+                        <ui:TextBox x:Name="AssistantContextBox" MinHeight="64" TextWrapping="Wrap"
+                                    AcceptsReturn="True" VerticalContentAlignment="Top"
+                                    PlaceholderText="Cargo, tema da reunião — o que ajudar a IA a sugerir melhor"/>
+                        <ui:TextBlock Style="{StaticResource Hint}" Margin="2,8,0,0"
+                                      Text="Atalhos durante a chamada:  Ctrl+Shift+1 print da tela  ·  Ctrl+Shift+2 região  ·  Ctrl+Shift+3 sugerir  ·  Ctrl+Shift+0 mostrar ou esconder esta janela"/>
+
                         <ui:TextBlock Text="Conta" Style="{StaticResource GroupTitle}" Margin="2,24,0,10"/>
                         <ui:TextBlock Text="API key do Google AI Studio" Style="{StaticResource FieldLabel}"/>
                         <PasswordBox x:Name="ApiKeyBox" VerticalContentAlignment="Center"/>
                     </StackPanel>
                 </ScrollViewer>
 
-                <ScrollViewer x:Name="AssistantView" Grid.Row="0" Visibility="Collapsed"
-                              VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
-                    <StackPanel>
-                        <ui:TextBlock Text="Assistente de respostas" Style="{StaticResource GroupTitle}"/>
-                        <CheckBox x:Name="AssistantEnabledCheck"
-                                  Content="Sugerir respostas às perguntas"
-                                  ToolTip="Usa a mesma chave do Google já configurada."/>
-                        <ui:TextBlock Style="{StaticResource Hint}" Margin="28,0,0,0"
-                                      Text="Perguntas da outra pessoa ficam sublinhadas na tradução. Clique numa delas para ver uma sugestão."/>
+                <Grid x:Name="AssistantView" Grid.Row="0" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-                        <ui:TextBlock Text="Sobre você" Style="{StaticResource FieldLabel}" Margin="2,18,0,4"/>
-                        <ui:TextBox x:Name="AssistantContextBox" MinHeight="72" TextWrapping="Wrap"
-                                    AcceptsReturn="True" VerticalContentAlignment="Top"
-                                    PlaceholderText="Cargo, tema da reunião — o que ajudar a IA a sugerir melhor"/>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <ui:TextBlock x:Name="AssistantStatus" DockPanel.Dock="Right" Text=""
+                                      VerticalAlignment="Center" Margin="12,0,2,0"
+                                      TextTrimming="CharacterEllipsis"
+                                      Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        <ui:Button x:Name="AssistantScreenButton" Content="Tela"
+                                   Icon="{ui:SymbolIcon Screenshot24}" Height="32"
+                                   Click="OnAssistantScreen"
+                                   ToolTip="Analisar um print da tela toda (Ctrl+Shift+1)"/>
+                        <ui:Button x:Name="AssistantRegionButton" Content="Região"
+                                   Icon="{ui:SymbolIcon Crop24}" Height="32" Margin="6,0,0,0"
+                                   Click="OnAssistantRegion"
+                                   ToolTip="Analisar uma região da tela (Ctrl+Shift+2)"/>
+                        <ui:Button x:Name="AssistantSuggestButton" Content="Sugerir"
+                                   Icon="{ui:SymbolIcon LightbulbFilament24}" Height="32" Margin="6,0,0,0"
+                                   Click="OnAssistantSuggest"
+                                   ToolTip="Sugerir uma resposta agora (Ctrl+Shift+3)"/>
+                        <Grid/>
+                    </DockPanel>
 
-                        <ui:TextBlock Text="Atalhos durante a chamada" Style="{StaticResource GroupTitle}"
-                                      Margin="2,26,0,10"/>
-                        <ui:TextBlock Text="Ctrl+Shift+1  ·  analisar um print da tela" Margin="2,0,0,6"
-                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <ui:TextBlock Text="Ctrl+Shift+2  ·  analisar uma região da tela" Margin="2,0,0,6"
-                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <ui:TextBlock Text="Ctrl+Shift+3  ·  sugerir uma resposta agora" Margin="2,0,0,6"
-                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <ui:TextBlock Text="Ctrl+Shift+0  ·  mostrar ou esconder esta janela" Margin="2,0,0,6"
-                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    </StackPanel>
-                </ScrollViewer>
+                    <Border Grid.Row="1" CornerRadius="8"
+                            Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                            BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="1">
+                        <TextBox x:Name="AssistantChatBox" IsReadOnly="True" TextWrapping="Wrap"
+                                 FontSize="14" VerticalScrollBarVisibility="Auto"
+                                 Background="Transparent" BorderThickness="0" Padding="14,12"/>
+                    </Border>
+
+                    <DockPanel Grid.Row="2" Margin="0,10,0,0">
+                        <ui:Button x:Name="AssistantSendButton" DockPanel.Dock="Right" Content="Enviar"
+                                   Icon="{ui:SymbolIcon Send24}" Appearance="Primary" Height="32"
+                                   Margin="6,0,0,0" Click="OnAssistantSend"/>
+                        <ui:TextBox x:Name="AssistantInputBox" Height="32" VerticalContentAlignment="Center"
+                                    KeyDown="OnAssistantInputKeyDown"
+                                    PlaceholderText="Pergunte qualquer coisa ao assistente · Enter envia"/>
+                    </DockPanel>
+
+                    <DockPanel Grid.Row="3" Margin="0,8,0,0">
+                        <ui:Button x:Name="AssistantCopyButton" Content="Copiar"
+                                   Icon="{ui:SymbolIcon CopySelect24}" Height="30"
+                                   Click="OnAssistantCopy" ToolTip="Copiar todo o chat"/>
+                        <ui:Button x:Name="AssistantClearButton" Content="Limpar"
+                                   Icon="{ui:SymbolIcon EraserMedium24}" Height="30" Margin="6,0,0,0"
+                                   Click="OnAssistantClear"
+                                   ToolTip="Apagar o chat (não apaga a transcrição da reunião)"/>
+                        <ui:Button x:Name="AssistantSetupButton" DockPanel.Dock="Right"
+                                   Content="Configuração" Icon="{ui:SymbolIcon Options24}"
+                                   Appearance="Transparent" Height="30" Click="OnAssistantSetup"
+                                   ToolTip="Ligar/desligar o assistente e ajustar o contexto sobre você"/>
+                        <Grid/>
+                    </DockPanel>
+                </Grid>
 
                 <DockPanel Grid.Row="1" Margin="0,14,0,0">
-                    <ui:Button x:Name="StartButton" Content="Iniciar" Icon="{ui:SymbolIcon Play24}"
+                    <ui:Button x:Name="StartButton" Content="Iniciar" Icon="{ui:SymbolIcon PlayCircle24}"
                                Appearance="Primary" MinWidth="118" Height="34" Click="OnStartStop"/>
                     <ui:Button x:Name="MuteButton" Content="Mic ligado" Icon="{ui:SymbolIcon Mic24}"
                                MinWidth="124" Height="34" Margin="8,0,0,0"

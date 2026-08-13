@@ -1,47 +1,61 @@
 <Window x:Class="GeminiTranslate.App.Ui.BalanceWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="Tradução" SizeToContent="WidthAndHeight"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
-        FontSize="11" Foreground="#EAEAEA">
-    <Border CornerRadius="9" Background="#E61E1F22" Padding="11,8" Margin="6"
-            BorderBrush="#3A3D42" BorderThickness="1"
+        FontSize="11" Foreground="{DynamicResource TextFillColorPrimaryBrush}">
+
+    <Window.Resources>
+        <Style x:Key="Scale" TargetType="ui:TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+        </Style>
+        <Style x:Key="Side" TargetType="ui:TextBlock">
+            <Setter Property="Width" Value="32"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+    </Window.Resources>
+
+    <Border CornerRadius="9" Background="#D91E2028" Padding="13,10" Margin="6"
+            BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="1"
             MouseLeftButtonDown="OnDrag" Cursor="SizeAll">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.5"/>
+            <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.55"/>
         </Border.Effect>
         <StackPanel>
             <StackPanel x:Name="OutRow"
                         ToolTip="Sua fala numa janela de 8 s. A parte cheia já saiu traduzida; a parte escura à direita é o que você disse e ainda não saiu. O traço é a cabeça da tradução, a borda direita é você agora.">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="você" Width="32" Foreground="#9AA0A6" VerticalAlignment="Center"/>
+                    <ui:TextBlock Text="você" Style="{StaticResource Side}"/>
                     <Grid Width="170" Height="9" VerticalAlignment="Center">
-                        <Border CornerRadius="4" Background="#2B2E33"/>
+                        <Border CornerRadius="4" Background="#33FFFFFF"/>
                         <Border x:Name="OutFill" HorizontalAlignment="Left" Width="0" CornerRadius="4"/>
                         <Border x:Name="OutHead" HorizontalAlignment="Left" Width="2" Background="#FFFFFF"/>
                     </Grid>
                 </StackPanel>
-                <TextBlock x:Name="OutText" Margin="32,3,0,0" Text="sem fala pendente"/>
+                <ui:TextBlock x:Name="OutText" Margin="32,3,0,0" Text="sem fala pendente"/>
             </StackPanel>
 
             <StackPanel x:Name="InRow" Margin="0,9,0,0"
                         ToolTip="A fala da outra pessoa, na mesma escala. A parte cheia já saiu traduzida no seu fone; a escura ainda está por sair.">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="eles" Width="32" Foreground="#9AA0A6" VerticalAlignment="Center"/>
+                    <ui:TextBlock Text="eles" Style="{StaticResource Side}"/>
                     <Grid Width="170" Height="9" VerticalAlignment="Center">
-                        <Border CornerRadius="4" Background="#2B2E33"/>
+                        <Border CornerRadius="4" Background="#33FFFFFF"/>
                         <Border x:Name="InFill" HorizontalAlignment="Left" Width="0" CornerRadius="4"/>
                         <Border x:Name="InHead" HorizontalAlignment="Left" Width="2" Background="#FFFFFF"/>
                     </Grid>
                 </StackPanel>
-                <TextBlock x:Name="InText" Margin="32,3,0,0" Text="sem fala pendente"/>
+                <ui:TextBlock x:Name="InText" Margin="32,3,0,0" Text="sem fala pendente"/>
             </StackPanel>
 
-            <DockPanel Margin="32,5,0,0" Width="170" HorizontalAlignment="Left">
-                <TextBlock Text="−8 s" Foreground="#6B6E73" FontSize="10"/>
-                <TextBlock Text="agora ▲" Foreground="#6B6E73" FontSize="10"
-                           DockPanel.Dock="Right" HorizontalAlignment="Right"/>
+            <DockPanel Margin="32,6,0,0" Width="170" HorizontalAlignment="Left">
+                <ui:TextBlock Text="−8 s" Style="{StaticResource Scale}"/>
+                <ui:TextBlock Text="agora ▲" Style="{StaticResource Scale}"
+                              DockPanel.Dock="Right" HorizontalAlignment="Right"/>
             </DockPanel>
         </StackPanel>
     </Border>

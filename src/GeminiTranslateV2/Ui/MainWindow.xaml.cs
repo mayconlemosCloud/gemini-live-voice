@@ -34,6 +34,7 @@ public partial class MainWindow : WpfUi.FluentWindow
     private readonly SuggestionPresenter _suggestions;
 
     private TranslationSession? _session;
+    private AssistantController? _assistant;
     private QuestionTranscript? _questionTranscript;
     private OverlayWindow? _overlay;
     private BalanceWindow? _balance;
@@ -57,6 +58,7 @@ public partial class MainWindow : WpfUi.FluentWindow
         ApplySettings();
 
         ShowView(Section.Live);
+        SetAssistantAvailable(false);
         StartDelayTimer();
 
         SourceInitialized += OnSourceInitialized;
@@ -213,10 +215,13 @@ public partial class MainWindow : WpfUi.FluentWindow
     {
         if (session.Assistant is not null)
         {
-            _overlay = new OverlayWindow(session.Assistant, session.Context, _services.ScreenCapture);
+            _assistant = BuildAssistant(session);
+            _overlay = new OverlayWindow(_assistant);
             _overlay.Closed += (_, _) => _overlay = null;
             _overlay.Show();
         }
+
+        SetAssistantAvailable(_assistant is not null);
 
         _balance = new BalanceWindow(_settings, _services.Settings);
         _balance.Closed += (_, _) => _balance = null;
@@ -265,7 +270,9 @@ public partial class MainWindow : WpfUi.FluentWindow
         _overlay = null;
         _balance = null;
         _session = null;
+        _assistant = null;
         _questionTranscript = null;
+        SetAssistantAvailable(false);
     }
 
     private void SetUiRunning(bool running)
@@ -273,7 +280,7 @@ public partial class MainWindow : WpfUi.FluentWindow
         if (running) ShowView(Section.Live);
 
         StartButton.Content = running ? "Parar" : "Iniciar";
-        StartButton.Icon = SymbolFor(running ? WpfUi.SymbolRegular.Stop24 : WpfUi.SymbolRegular.Play24);
+        StartButton.Icon = SymbolFor(running ? WpfUi.SymbolRegular.RecordStop24 : WpfUi.SymbolRegular.PlayCircle24);
         StatusText.Text = running ? "Traduzindo ao vivo…" : "Parado";
 
         MuteButton.IsEnabled = running;

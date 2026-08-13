@@ -3,6 +3,8 @@ using System.Windows.Input;
 using GeminiTranslate.App.Platform;
 using GeminiTranslate.Core.Diagnostics;
 
+using WpfUi = Wpf.Ui.Controls;
+
 namespace GeminiTranslate.App.Ui;
 
 /// <summary>
@@ -17,7 +19,7 @@ namespace GeminiTranslate.App.Ui;
 /// Fica sempre no topo, como o overlay e a etiqueta de saldo. Sem isso ela abria ATRÁS do app de
 /// reunião em tela cheia, onde não havia como achá-la nem fechá-la.
 /// </remarks>
-public partial class SuggestionWindow : Window
+public partial class SuggestionWindow : WpfUi.FluentWindow
 {
     /// <summary>Monta a janela vazia. O conteúdo vem de <see cref="BeginQuestion"/>.</summary>
     public SuggestionWindow()
