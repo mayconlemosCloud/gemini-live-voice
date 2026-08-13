@@ -68,7 +68,7 @@ public sealed class Settings
     /// Oculta as janelas do app de compartilhamento de tela, gravação e print
     /// (SetWindowDisplayAffinity). O usuário continua vendo tudo; quem está do outro lado, não.
     /// </summary>
-    public bool HideFromScreenShare { get; set; } = true;
+    public bool HideFromScreenShare { get; set; } = false;
 
     /// <summary>
     /// Modelo Gemini (generateContent) do assistente. Não afeta a tradução ao vivo.
