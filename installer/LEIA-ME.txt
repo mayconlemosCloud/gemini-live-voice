@@ -1,0 +1,63 @@
+DRIVERS DE AUDIO - Tradutor de Reunioes (Gemini Live)
+=====================================================
+
+Normalmente voce NAO precisa fazer nada aqui: o instalador do Tradutor de
+Reunioes ja instala os dois drivers automaticamente.
+
+Esta pasta existe para o caso de algo dar errado, ou se voce quiser
+reinstalar os drivers depois.
+
+
+PARA QUE SERVEM
+---------------
+
+VB-CABLE (pasta VB-CABLE)
+    Cria um "cabo de audio virtual". E por ele que a sua voz ja traduzida
+    entra na reuniao como se fosse o seu microfone. SEM ELE, a outra pessoa
+    nao te ouve traduzido.
+
+Hi-Fi Cable ASIO Bridge (pasta HiFiCable)
+    Segundo cabo virtual, usado para separar os caminhos de audio e evitar
+    eco/retorno da sua propria voz traduzida.
+
+
+COMO REINSTALAR NA MAO
+----------------------
+
+1) Abra a pasta VB-CABLE, clique com o botao direito em
+   VBCABLE_Setup_x64.exe e escolha "Executar como administrador".
+   Clique em "Install Driver" e aceite o aviso do Windows.
+
+2) Abra a pasta HiFiCable, clique com o botao direito em
+   HiFiCableAsioBridgeSetup.exe e escolha "Executar como administrador".
+   Siga o assistente (Next, Next, Install).
+
+3) REINICIE o computador. Os dois drivers so passam a existir depois do
+   reinicio -- se voce nao reiniciar, eles nao vao aparecer na lista de
+   dispositivos do app.
+
+4) Abra o Tradutor de Reunioes. Em "Microfone virtual", escolha
+   "CABLE Input (VB-Audio Virtual Cable)".
+
+
+COMO SABER SE DEU CERTO
+-----------------------
+
+Depois de reiniciar, clique com o botao direito no icone de som ao lado do
+relogio -> "Configuracoes de som". Devem aparecer, na lista de dispositivos:
+
+    CABLE Input (VB-Audio Virtual Cable)
+    CABLE Output (VB-Audio Virtual Cable)
+    Hi-Fi Cable Input / Output
+
+Se esses nomes estiverem la, os drivers estao instalados.
+
+
+CREDITOS E LICENCA
+------------------
+
+VB-CABLE e Hi-Fi Cable ASIO Bridge sao produtos da VB-Audio Software
+(Vincent Burel) e sao redistribuidos aqui sem nenhuma modificacao.
+
+VB-CABLE e donationware: se voce usa com frequencia, considere fazer uma
+doacao ao autor em https://www.vb-cable.com
